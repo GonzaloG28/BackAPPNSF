@@ -1,0 +1,105 @@
+# app/routers/convocatorias.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.core.deps import get_db
+from app.models.convocatoria import Convocatoria, ConvocatoriaStatus
+from app.models.convocatoria_entry import ConvocatoriaEntry
+from app.schemas.convocatoria import ConvocatoriaCreate, ConvocatoriaEntriesUpdate
+from app.models.competition import Competition
+from app.services.convocatoria_engine import build_convocatoria_matrix, sync_convocatoria_entries
+from app.core.deps import get_current_user
+
+
+router = APIRouter(prefix="/convocatorias", tags=["convocatorias"], dependencies=[Depends(get_current_user)])
+
+
+@router.get("")
+def list_convocatorias(db: Session = Depends(get_db)):
+    convocatorias = db.query(Convocatoria).order_by(Convocatoria.created_at.desc()).all()
+    return [
+        {
+            "id": c.id,
+            "competition_id": c.competition_id,
+            "status": c.status.value,
+            "created_at": c.created_at,
+            "competition_name": c.competition.name if c.competition else None,
+            "competition_date": c.competition.date.isoformat() if c.competition else None,
+        }
+        for c in convocatorias
+    ]
+
+@router.post("", status_code=201)
+def create_convocatoria(payload: ConvocatoriaCreate, db: Session = Depends(get_db)):
+    convocatoria = Convocatoria(competition_id=payload.competition_id, status=ConvocatoriaStatus.DRAFT)
+    db.add(convocatoria)
+    db.commit()
+    db.refresh(convocatoria)
+    return convocatoria
+
+
+@router.get("/{convocatoria_id}/matrix")
+def get_convocatoria_matrix(convocatoria_id: int, db: Session = Depends(get_db)):
+    convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not convocatoria:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+
+    matrix = build_convocatoria_matrix(db, convocatoria)
+    sync_convocatoria_entries(db, convocatoria, matrix)
+
+    return {"convocatoria_id": convocatoria_id, "swimmers": matrix}
+
+
+@router.patch("/{convocatoria_id}/entries")
+def update_entries(convocatoria_id: int, payload: ConvocatoriaEntriesUpdate, db: Session = Depends(get_db)):
+    convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not convocatoria:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+
+    updated = 0
+    for item in payload.entries:
+        entry = db.query(ConvocatoriaEntry).filter(
+            ConvocatoriaEntry.convocatoria_id == convocatoria_id,
+            ConvocatoriaEntry.swimmer_id == item.swimmer_id,
+            ConvocatoriaEntry.event_type_id == item.event_type_id,
+        ).first()
+        if entry:
+            entry.selected = item.selected
+            db.add(entry)
+            updated += 1
+
+    db.commit()
+    return {"updated": updated}
+
+
+@router.patch("/{convocatoria_id}/confirm")
+def confirm_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):
+    convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not convocatoria:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+
+    convocatoria.status = ConvocatoriaStatus.CONFIRMED
+    db.add(convocatoria)
+    db.commit()
+    db.refresh(convocatoria)
+    return convocatoria
+
+@router.delete("/{convocatoria_id}", status_code=204)
+def delete_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):
+    convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not convocatoria:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+
+    competition_id = convocatoria.competition_id
+
+    db.delete(convocatoria)  # cascade="all, delete-orphan" borra las entries asociadas
+    db.flush()
+
+    remaining = db.query(Convocatoria).filter(Convocatoria.competition_id == competition_id).count()
+    if remaining == 0:
+        competition = db.query(Competition).filter(Competition.id == competition_id).first()
+        if competition:
+            db.delete(competition)  # cascade borra sus qualifying_times
+
+    db.commit()
+    return None

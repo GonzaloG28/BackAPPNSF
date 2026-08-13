@@ -1,0 +1,17 @@
+from app.models.user import User
+from app.models.swimmer import Swimmer
+from app.models.swimmer_metric import SwimmerMetric
+from app.models.event_type import EventType
+from app.models.time_record import TimeRecord
+from app.models.attendance import Attendance
+from app.models.training_session import TrainingSession
+from app.models.payment import Payment
+from app.models.competition import Competition
+from app.models.qualifying_time import QualifyingTime
+from app.models.convocatoria import Convocatoria
+from app.models.convocatoria_entry import ConvocatoriaEntry
+from app.models.import_log import ImportLog
+from app.models.personal_schedule import PersonalSchedule
+from app.models.attendance_log import AttendanceLog
+from app.models.gym_record import Exercise, GymRecord
+from app.models.import_config import ImportMappingConfig

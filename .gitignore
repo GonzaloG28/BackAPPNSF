@@ -1,0 +1,36 @@
+# ── Secretos / configuración local ──────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Entorno virtual de Python ───────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── Cache y bytecode de Python ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# ── Testing ──────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Archivos de datos / prueba que no deberían ir al repo ──────────
+excel_prueba_roster.xlsx
+*.xlsx
+!seed_data/**/*.xlsx
+
+# ── Editor / SO ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
