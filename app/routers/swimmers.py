@@ -65,6 +65,20 @@ def create_swimmer(payload: SwimmerCreate, db: Session = Depends(get_db)):
     if payload.document_id and not validate_rut(payload.document_id):
         raise HTTPException(status_code=400, detail="RUT inválido")
 
+    if payload.document_id:
+        existing = db.query(Swimmer).filter(Swimmer.document_id == payload.document_id).first()
+        if existing:
+            if existing.status == SwimmerStatus.DELETED:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Este RUT pertenece a un nadador eliminado "
+                        f"({existing.first_name_1} {existing.last_name_1}). "
+                        f"Debes eliminarlo definitivamente antes de reutilizar el RUT."
+                    ),
+                )
+            raise HTTPException(status_code=400, detail="Este RUT ya existe en el sistema")
+
     swimmer = Swimmer(**payload.model_dump(), status=SwimmerStatus.ACTIVE)
     if swimmer.birth_date:
         swimmer.category = swimmer.compute_category()
@@ -83,8 +97,20 @@ def update_swimmer(swimmer_id: int, payload: SwimmerUpdate, db: Session = Depend
 
     data = payload.model_dump(exclude_unset=True)
 
-    if "document_id" in data and data["document_id"] and not validate_rut(data["document_id"]):
-        raise HTTPException(status_code=400, detail="RUT inválido")
+    if "document_id" in data and data["document_id"]:
+        if not validate_rut(data["document_id"]):
+            raise HTTPException(status_code=400, detail="RUT inválido")
+        other = db.query(Swimmer).filter(
+            Swimmer.document_id == data["document_id"],
+            Swimmer.id != swimmer_id,
+        ).first()
+        if other:
+            detail = (
+                f"Este RUT pertenece a un nadador eliminado ({other.first_name_1} {other.last_name_1})."
+                if other.status == SwimmerStatus.DELETED
+                else "Este RUT ya existe en el sistema"
+            )
+            raise HTTPException(status_code=409 if other.status == SwimmerStatus.DELETED else 400, detail=detail)
 
     for field, value in data.items():
         setattr(swimmer, field, value)

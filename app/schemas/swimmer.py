@@ -16,6 +16,11 @@ class SwimmerGenderEnum(str, Enum):
     FEMALE = "FEMALE"
 
 
+class SwimmerProfileEnum(str, Enum):
+    COMPETITIVE = "COMPETITIVE"
+    FORMATIVE = "FORMATIVE"
+
+
 class SwimmerBase(BaseModel):
     first_name_1: str
     first_name_2: Optional[str] = None
@@ -28,6 +33,8 @@ class SwimmerBase(BaseModel):
     institution: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    profile: Optional[SwimmerProfileEnum] = None          
+    is_federated: Optional[bool] = None                    
 
 
 class SwimmerCreate(SwimmerBase):
@@ -46,6 +53,8 @@ class SwimmerUpdate(BaseModel):
     institution: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    profile: Optional[SwimmerProfileEnum] = None            
+    is_federated: Optional[bool] = None                     
 
 
 class SwimmerStatusUpdate(BaseModel):
@@ -53,7 +62,7 @@ class SwimmerStatusUpdate(BaseModel):
     reason: Optional[str] = None
 
 
-class SwimmerOut(SwimmerBase):
+class SwimmerOut(SwimmerBase):  
     model_config = ConfigDict(from_attributes=True)
     id: int
     category: Optional[str] = None
