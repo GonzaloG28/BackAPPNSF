@@ -328,15 +328,38 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
 
 
 @router.post("/{swimmer_id}/times")
-def create_time_record(swimmer_id: int, event_type_id: int, time_seconds: float, recorded_date: date, location_note: Optional[str] = None, db: Session = Depends(get_db)):
+def create_time_record(
+    swimmer_id: int, event_type_id: int, time_seconds: float, recorded_date: date,
+    pool_length: Optional[int] = None,
+    location_note: Optional[str] = None, db: Session = Depends(get_db),
+):
     record = TimeRecord(
         swimmer_id=swimmer_id, event_type_id=event_type_id, time_seconds=time_seconds,
-        recorded_date=recorded_date, location_note=location_note, source="MANUAL" if hasattr(TimeSource, "MANUAL") else "TRAINING",
+        recorded_date=recorded_date, pool_length=pool_length,
+        location_note=location_note, source=TimeSource.TRAINING,
     )
     db.add(record)
     db.commit()
     db.refresh(record)
     return record
+
+
+@router.get("/{swimmer_id}/times")
+def get_swimmer_times(swimmer_id: int, event_type_id: Optional[int] = None, sort: str = Query("date_desc"), db: Session = Depends(get_db)):
+    query = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id)
+    if event_type_id:
+        query = query.filter(TimeRecord.event_type_id == event_type_id)
+    order_map = {
+        "date_desc": TimeRecord.recorded_date.desc(), "date_asc": TimeRecord.recorded_date.asc(),
+        "time_asc": TimeRecord.time_seconds.asc(), "time_desc": TimeRecord.time_seconds.desc(),
+    }
+    records = query.order_by(order_map.get(sort, TimeRecord.recorded_date.desc())).all()
+    return [{
+        "id": r.id, "event_type_id": r.event_type_id, "event_name": r.event_type.name,
+        "time_seconds": float(r.time_seconds), "recorded_date": r.recorded_date.isoformat(),
+        "pool_length": r.pool_length, "location_note": r.location_note,
+        "competition_name": r.competition.name if r.competition else None,
+    } for r in records]
 
 
 @router.get("/{swimmer_id}/times/grouped")

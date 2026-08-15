@@ -1,5 +1,6 @@
 # app/routers/performance.py
 from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, get_current_user
@@ -53,3 +54,21 @@ def get_swimmer_timeline(swimmer_id: int, event_type_id: int = None, db: Session
 @router.get("/event-types")
 def list_event_types(db: Session = Depends(get_db)):
     return db.query(EventType).all()
+
+
+
+@router.get("/swimmers/{swimmer_id}/evolution")
+def get_evolution(swimmer_id: int, event_type_id: int, pool_length: Optional[int] = None, db: Session = Depends(get_db)):
+    from app.models.time_record import TimeRecord
+    query = db.query(TimeRecord).filter(
+        TimeRecord.swimmer_id == swimmer_id, TimeRecord.event_type_id == event_type_id
+    )
+    if pool_length:
+        query = query.filter(TimeRecord.pool_length == pool_length)
+    records = query.order_by(TimeRecord.recorded_date.asc()).all()
+
+    return [{
+        "id": r.id, "date": r.recorded_date.isoformat(), "time_seconds": float(r.time_seconds),
+        "pool_length": r.pool_length,
+        "label": r.competition.name if r.competition else (r.location_note or "Registro"),
+    } for r in records]

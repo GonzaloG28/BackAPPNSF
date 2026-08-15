@@ -23,7 +23,7 @@ class TimeRecord(Base):
     source = Column(Enum(TimeSource), default=TimeSource.TRAINING, nullable=False)
     location_note = Column(String(150), nullable=True)
     is_official = Column(Boolean, default=False)
-
+    pool_length = Column(Integer, nullable=True)  # 25 o 50
     swimmer = relationship("Swimmer", back_populates="time_records")
     event_type = relationship("EventType")
     competition = relationship("Competition")
