@@ -13,6 +13,7 @@ from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.time_record import TimeRecord, TimeSource
 from app.schemas.time_record import TimeRecordUpdate
 from app.models.swimmer_metric import SwimmerMetric
+from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut
 from app.models.gym_record import GymRecord
 from app.utils.rut_validator import validate_rut
@@ -28,11 +29,14 @@ def list_swimmers(
     profile: Optional[str] = None,
     is_federated: Optional[bool] = None,
     search: Optional[str] = None,
+    include_deleted: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     query = db.query(Swimmer)
     if status:
         query = query.filter(Swimmer.status == status)
+    elif not include_deleted:
+        query = query.filter(Swimmer.status != SwimmerStatus.DELETED)
     if category:
         query = query.filter(Swimmer.category == category)
     if profile:
@@ -108,6 +112,29 @@ def update_swimmer_status(swimmer_id: int, payload: SwimmerStatusUpdate, db: Ses
     db.commit()
     db.refresh(swimmer)
     return swimmer
+
+
+@router.delete("/{swimmer_id}", status_code=204)
+def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+
+    try:
+        # Limpia registros relacionados que NO tienen cascade definido en el modelo.
+        # (metrics, time_records y attendances sí tienen cascade="all, delete-orphan"
+        # en la relationship de Swimmer, así que esos se borran solos al hacer db.delete)
+        db.query(GymRecord).filter(GymRecord.swimmer_id == swimmer_id).delete()
+        db.query(ConvocatoriaEntry).filter(ConvocatoriaEntry.swimmer_id == swimmer_id).delete()
+
+        db.delete(swimmer)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo eliminar: el nadador tiene registros asociados que impiden el borrado."
+        )
 
 
 @router.get("/{swimmer_id}/times")
