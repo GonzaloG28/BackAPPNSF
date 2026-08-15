@@ -16,7 +16,7 @@ from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut
 from app.models.gym_record import GymRecord
-from app.utils.rut_validator import validate_rut
+from app.utils.rut_validator import validate_rut, normalize_rut
 
 router = APIRouter(prefix="/swimmers", tags=["swimmers"], dependencies=[Depends(get_current_user)])
 
@@ -65,21 +65,20 @@ def create_swimmer(payload: SwimmerCreate, db: Session = Depends(get_db)):
     if payload.document_id and not validate_rut(payload.document_id):
         raise HTTPException(status_code=400, detail="RUT inválido")
 
-    if payload.document_id:
-        existing = db.query(Swimmer).filter(Swimmer.document_id == payload.document_id).first()
+    data = payload.model_dump()
+    if data.get("document_id"):
+        data["document_id"] = normalize_rut(data["document_id"])
+
+        existing = db.query(Swimmer).filter(Swimmer.document_id == data["document_id"]).first()
         if existing:
             if existing.status == SwimmerStatus.DELETED:
                 raise HTTPException(
                     status_code=409,
-                    detail=(
-                        f"Este RUT pertenece a un nadador eliminado "
-                        f"({existing.first_name_1} {existing.last_name_1}). "
-                        f"Debes eliminarlo definitivamente antes de reutilizar el RUT."
-                    ),
+                    detail=f"Este RUT pertenece a un nadador eliminado ({existing.first_name_1} {existing.last_name_1}).",
                 )
             raise HTTPException(status_code=400, detail="Este RUT ya existe en el sistema")
 
-    swimmer = Swimmer(**payload.model_dump(), status=SwimmerStatus.ACTIVE)
+    swimmer = Swimmer(**data, status=SwimmerStatus.ACTIVE)
     if swimmer.birth_date:
         swimmer.category = swimmer.compute_category()
 
@@ -100,6 +99,8 @@ def update_swimmer(swimmer_id: int, payload: SwimmerUpdate, db: Session = Depend
     if "document_id" in data and data["document_id"]:
         if not validate_rut(data["document_id"]):
             raise HTTPException(status_code=400, detail="RUT inválido")
+        data["document_id"] = normalize_rut(data["document_id"])
+
         other = db.query(Swimmer).filter(
             Swimmer.document_id == data["document_id"],
             Swimmer.id != swimmer_id,

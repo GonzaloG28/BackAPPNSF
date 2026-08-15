@@ -1,17 +1,47 @@
+# app/utils/rut_validator.py
 import re
 
 
+def _clean_rut(rut: str) -> str:
+    """Deja solo dígitos y K/k, en mayúscula. Quita puntos, guión y espacios."""
+    return re.sub(r"[^0-9kK]", "", rut).upper()
+
+
+def _compute_dv(body: str) -> str:
+    """Calcula el dígito verificador de un RUT chileno (algoritmo módulo 11)."""
+    total = 0
+    multiplier = 2
+    for digit in reversed(body):
+        total += int(digit) * multiplier
+        multiplier = multiplier + 1 if multiplier < 7 else 2
+    remainder = 11 - (total % 11)
+    if remainder == 11:
+        return "0"
+    if remainder == 10:
+        return "K"
+    return str(remainder)
+
+
 def validate_rut(rut: str) -> bool:
-    rut = rut.replace(".", "").replace("-", "").upper()
-    if not re.fullmatch(r"\d{7,8}[0-9K]", rut):
+    if not rut:
         return False
 
-    body, dv = rut[:-1], rut[-1]
-    total, factor = 0, 2
-    for digit in reversed(body):
-        total += int(digit) * factor
-        factor = 2 if factor == 7 else factor + 1
+    clean = _clean_rut(rut)
+    if len(clean) < 2:
+        return False
 
-    remainder = 11 - (total % 11)
-    expected_dv = {11: "0", 10: "K"}.get(remainder, str(remainder))
-    return dv == expected_dv
+    body, dv = clean[:-1], clean[-1]
+    if not body.isdigit():
+        return False
+
+    return _compute_dv(body) == dv
+
+
+def normalize_rut(rut: str) -> str:
+    """Devuelve el RUT limpio (sin puntos) con guión, para guardar consistente en BD.
+    Ej: '12.345.678-9' -> '12345678-9'
+    """
+    clean = _clean_rut(rut)
+    if len(clean) < 2:
+        return clean
+    return f"{clean[:-1]}-{clean[-1]}"
