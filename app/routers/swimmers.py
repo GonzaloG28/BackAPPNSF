@@ -7,7 +7,6 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from io import BytesIO
 
-
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.time_record import TimeRecord, TimeSource
@@ -21,7 +20,7 @@ from app.utils.rut_validator import validate_rut, normalize_rut
 
 router = APIRouter(prefix="/swimmers", tags=["swimmers"], dependencies=[Depends(get_current_user)])
 
-SPLIT_TOLERANCE = 0.05 
+SPLIT_TOLERANCE = 0.05  # segundos de margen entre suma de parciales y tiempo total
 
 
 def _validate_and_build_splits(splits_in, time_seconds: float):
@@ -44,8 +43,33 @@ def _validate_and_build_splits(splits_in, time_seconds: float):
     return built
 
 
+def _serialize_time_record(r: TimeRecord) -> dict:
+    """Serialización única y consistente de un TimeRecord, usada por todos los endpoints de lectura."""
+    return {
+        "id": r.id,
+        "event_type_id": r.event_type_id,
+        "event_name": r.event_type.name,
+        "time_seconds": float(r.time_seconds),
+        "recorded_date": r.recorded_date.isoformat(),
+        "pool_length": r.pool_length,
+        "location_note": r.location_note,
+        "competition_name": r.competition.name if r.competition else None,
+        "split_increment": r.split_increment,
+        "splits": [
+            {
+                "distance_mark": s.distance_mark,
+                "segment_seconds": float(s.segment_seconds),
+                "cumulative_seconds": float(s.cumulative_seconds),
+            }
+            for s in r.splits
+        ],
+    }
 
-# app/routers/swimmers.py
+
+# ──────────────────────────────────────────────────────────────
+# Nadadores — CRUD
+# ──────────────────────────────────────────────────────────────
+
 @router.get("", response_model=list[SwimmerOut])
 def list_swimmers(
     status: Optional[str] = Query(None),
@@ -180,7 +204,7 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
 
         db.delete(swimmer)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise HTTPException(
             status_code=409,
@@ -188,39 +212,36 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
         )
 
 
-@router.get("/{swimmer_id}/times")
-def get_swimmer_times(
-    swimmer_id: int,
-    event_type_id: Optional[int] = None,
-    sort: str = Query("date_desc"),
-    db: Session = Depends(get_db),
-):
-    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
-    if not swimmer:
-        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+@router.get("/export/clean")
+def export_clean_roster(db: Session = Depends(get_db)):
+    swimmers = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED).all()
 
-    query = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id)
-    if event_type_id:
-        query = query.filter(TimeRecord.event_type_id == event_type_id)
+    wb = Workbook()
+    ws = wb.active
+    headers = ["Nombres", "Apellidos", "RUT", "Fecha de Nacimiento", "Teléfono", "Correo", "Institución", "Estado"]
+    ws.append(headers)
 
-    order_map = {
-        "date_desc": TimeRecord.recorded_date.desc(),
-        "date_asc": TimeRecord.recorded_date.asc(),
-        "time_asc": TimeRecord.time_seconds.asc(),
-        "time_desc": TimeRecord.time_seconds.desc(),
-    }
-    records = query.order_by(order_map.get(sort, TimeRecord.recorded_date.desc())).all()
+    for s in swimmers:
+        ws.append([
+            f"{s.first_name_1} {s.first_name_2 or ''}".strip(),
+            f"{s.last_name_1} {s.last_name_2 or ''}".strip(),
+            s.document_id or "", s.birth_date.strftime("%d/%m/%Y") if s.birth_date else "",
+            s.phone or "", s.email or "", s.institution or "",
+            "Activo" if s.status.value == "ACTIVE" else "Congelado",
+        ])
 
-    return [{
-        "id": r.id, "event_type_id": r.event_type_id,
-        "event_name": r.event_type.name, "time_seconds": float(r.time_seconds),
-        "recorded_date": r.recorded_date, "location_note": r.location_note,
-        "competition_name": r.competition.name if r.competition else None,
-        "split_increment": r.split_increment,
-        "splits": [{"distance_mark": s.distance_mark, "segment_seconds": float(s.segment_seconds),
-        "cumulative_seconds": float(s.cumulative_seconds)} for s in r.splits],
-    } for r in records]
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="nadadores.xlsx"'}
+    )
 
+
+# ──────────────────────────────────────────────────────────────
+# Métricas físicas (peso / altura / envergadura)
+# ──────────────────────────────────────────────────────────────
 
 @router.get("/{swimmer_id}/metrics")
 def get_swimmer_metrics(swimmer_id: int, db: Session = Depends(get_db)):
@@ -256,10 +277,13 @@ def add_swimmer_metric(
     return metric
 
 
+# ──────────────────────────────────────────────────────────────
+# Gimnasio / Fuerza
+# ──────────────────────────────────────────────────────────────
+
 @router.get("/{swimmer_id}/gym")
 def get_gym_records(swimmer_id: int, db: Session = Depends(get_db)):
     """Devuelve el RM más reciente por ejercicio (para la vista resumen)."""
-    from sqlalchemy import func as sqlfunc
     records = db.query(GymRecord).filter(GymRecord.swimmer_id == swimmer_id).order_by(GymRecord.recorded_at.desc()).all()
 
     latest_by_exercise = {}
@@ -302,6 +326,7 @@ def delete_gym_record(swimmer_id: int, record_id: int, db: Session = Depends(get
     ).delete()
     db.commit()
 
+
 @router.delete("/{swimmer_id}/gym/{exercise_id}", status_code=204)
 def delete_swimmer_gym_history(swimmer_id: int, exercise_id: int, db: Session = Depends(get_db)):
     """Elimina TODO el historial de este nadador para este ejercicio (no borra el ejercicio en sí)."""
@@ -311,29 +336,63 @@ def delete_swimmer_gym_history(swimmer_id: int, exercise_id: int, db: Session = 
     db.commit()
 
 
-@router.get("/export/clean")
-def export_clean_roster(db: Session = Depends(get_db)):
-    swimmers = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED).all()
+# ──────────────────────────────────────────────────────────────
+# Tiempos / Pruebas / Parciales
+# ──────────────────────────────────────────────────────────────
 
-    wb = Workbook()
-    ws = wb.active
-    headers = ["Nombres", "Apellidos", "RUT", "Fecha de Nacimiento", "Teléfono", "Correo", "Institución", "Estado"]
-    ws.append(headers)
+@router.get("/{swimmer_id}/times/grouped")
+def get_times_grouped(swimmer_id: int, db: Session = Depends(get_db)):
+    """Nivel 1: solo los nombres (y distancia) de las pruebas que el nadador tiene registradas."""
+    records = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id).all()
+    seen = {}
+    for r in records:
+        seen[r.event_type_id] = {"event_name": r.event_type.name, "distance_m": r.event_type.distance_m}
+    return [{"event_type_id": k, "event_name": v["event_name"], "distance_m": v["distance_m"]} for k, v in seen.items()]
 
-    for s in swimmers:
-        ws.append([
-            f"{s.first_name_1} {s.first_name_2 or ''}".strip(),
-            f"{s.last_name_1} {s.last_name_2 or ''}".strip(),
-            s.document_id or "", s.birth_date.strftime("%d/%m/%Y") if s.birth_date else "",
-            s.phone or "", s.email or "", s.institution or "",
-            "Activo" if s.status.value == "ACTIVE" else "Congelado",
-        ])
 
-    buffer = BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="nadadores.xlsx"'})
+@router.get("/{swimmer_id}/times")
+def get_swimmer_times(
+    swimmer_id: int,
+    event_type_id: Optional[int] = None,
+    sort: str = Query("date_desc"),
+    db: Session = Depends(get_db),
+):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+
+    query = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id)
+    if event_type_id:
+        query = query.filter(TimeRecord.event_type_id == event_type_id)
+
+    order_map = {
+        "date_desc": TimeRecord.recorded_date.desc(),
+        "date_asc": TimeRecord.recorded_date.asc(),
+        "time_asc": TimeRecord.time_seconds.asc(),
+        "time_desc": TimeRecord.time_seconds.desc(),
+    }
+    records = query.order_by(order_map.get(sort, TimeRecord.recorded_date.desc())).all()
+
+    return [_serialize_time_record(r) for r in records]
+
+
+@router.post("/{swimmer_id}/times")
+def create_time_record(swimmer_id: int, payload: TimeRecordCreate, db: Session = Depends(get_db)):
+    splits = _validate_and_build_splits(payload.splits, payload.time_seconds)
+
+    record = TimeRecord(
+        swimmer_id=swimmer_id, event_type_id=payload.event_type_id, time_seconds=payload.time_seconds,
+        recorded_date=payload.recorded_date, pool_length=payload.pool_length,
+        location_note=payload.location_note, source=TimeSource.TRAINING,
+        split_increment=payload.split_increment,
+    )
+    if splits:
+        record.splits = splits
+
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _serialize_time_record(record)
 
 
 @router.patch("/{swimmer_id}/times/{time_id}")
@@ -357,54 +416,7 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
     db.add(record)
     db.commit()
     db.refresh(record)
-    return record
-
-
-@router.post("/{swimmer_id}/times")
-def create_time_record(swimmer_id: int, payload: TimeRecordCreate, db: Session = Depends(get_db)):
-    splits = _validate_and_build_splits(payload.splits, payload.time_seconds)
-
-    record = TimeRecord(
-        swimmer_id=swimmer_id, event_type_id=payload.event_type_id, time_seconds=payload.time_seconds,
-        recorded_date=payload.recorded_date, pool_length=payload.pool_length,
-        location_note=payload.location_note, source=TimeSource.TRAINING,
-        split_increment=payload.split_increment,
-    )
-    if splits:
-        record.splits = splits
-
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-    return record
-
-
-@router.get("/{swimmer_id}/times")
-def get_swimmer_times(swimmer_id: int, event_type_id: Optional[int] = None, sort: str = Query("date_desc"), db: Session = Depends(get_db)):
-    query = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id)
-    if event_type_id:
-        query = query.filter(TimeRecord.event_type_id == event_type_id)
-    order_map = {
-        "date_desc": TimeRecord.recorded_date.desc(), "date_asc": TimeRecord.recorded_date.asc(),
-        "time_asc": TimeRecord.time_seconds.asc(), "time_desc": TimeRecord.time_seconds.desc(),
-    }
-    records = query.order_by(order_map.get(sort, TimeRecord.recorded_date.desc())).all()
-    return [{
-        "id": r.id, "event_type_id": r.event_type_id, "event_name": r.event_type.name,
-        "time_seconds": float(r.time_seconds), "recorded_date": r.recorded_date.isoformat(),
-        "pool_length": r.pool_length, "location_note": r.location_note,
-        "competition_name": r.competition.name if r.competition else None,
-    } for r in records]
-
-
-@router.get("/{swimmer_id}/times/grouped")
-def get_times_grouped(swimmer_id: int, db: Session = Depends(get_db)):
-    records = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id).all()
-    seen = {}
-    for r in records:
-        seen[r.event_type_id] = {"event_name": r.event_type.name, "distance_m": r.event_type.distance_m}
-    return [{"event_type_id": k, "event_name": v["event_name"], "distance_m": v["distance_m"]} for k, v in seen.items()]
-
+    return _serialize_time_record(record)
 
 
 @router.delete("/{swimmer_id}/times/{time_id}", status_code=204)
@@ -416,6 +428,7 @@ def delete_time_record(swimmer_id: int, time_id: int, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Registro no encontrado")
     db.delete(record)
     db.commit()
+
 
 @router.delete("/{swimmer_id}/times/event/{event_type_id}", status_code=204)
 def delete_all_times_for_event(swimmer_id: int, event_type_id: int, db: Session = Depends(get_db)):
