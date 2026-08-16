@@ -15,3 +15,4 @@ from app.models.personal_schedule import PersonalSchedule
 from app.models.attendance_log import AttendanceLog
 from app.models.gym_record import Exercise, GymRecord
 from app.models.import_config import ImportMappingConfig
+from app.models.time_split import TimeSplit
