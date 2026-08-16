@@ -16,6 +16,7 @@ class ConvocatoriaEntry(Base):
     best_time_seconds = Column(Numeric(10, 2), nullable=True)
     selected = Column(Boolean, default=False)
     time_record_date = Column(Date, nullable=True)
+    time_record_id = Column(Integer, ForeignKey("time_records.id"), nullable=True)
     convocatoria = relationship("Convocatoria", back_populates="entries")
     swimmer = relationship("Swimmer")
     event_type = relationship("EventType")

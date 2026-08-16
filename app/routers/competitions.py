@@ -49,17 +49,12 @@ def get_qualifying_times(competition_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{competition_id}/qualifying-times", status_code=201)
 def create_qualifying_time(
-    competition_id: int,
-    event_type_id: int,
-    min_time_seconds: float,
-    gender: str,  # "MALE" | "FEMALE" — obligatorio según tu spec
-    category: str = "OPEN",  # "OPEN" | "Infantil" | "Juvenil A" | "Juvenil B" | "Todo Competidor"
+    competition_id: int, event_type_id: int, min_time_seconds: float,
+    gender: str, category: str = "OPEN", pool_length: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    qt = QualifyingTime(
-        competition_id=competition_id, event_type_id=event_type_id,
-        gender=gender, category=category, min_time_seconds=min_time_seconds,
-    )
+    qt = QualifyingTime(competition_id=competition_id, event_type_id=event_type_id,
+                         gender=gender, category=category, min_time_seconds=min_time_seconds, pool_length=pool_length)
     db.add(qt)
     db.commit()
     db.refresh(qt)

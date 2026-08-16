@@ -50,6 +50,15 @@ def get_convocatoria_matrix(convocatoria_id: int, db: Session = Depends(get_db))
     return {"convocatoria_id": convocatoria_id, "swimmers": matrix}
 
 
+@router.get("/stats")
+def get_convocatoria_stats(db: Session = Depends(get_db)):
+    all_conv = db.query(Convocatoria).all()
+    return {
+        "total": len(all_conv),
+        "active": sum(1 for c in all_conv if c.status in ("CONFIRMED", "EXPORTED")),
+        "draft": sum(1 for c in all_conv if c.status == "DRAFT"),
+    }
+
 @router.patch("/{convocatoria_id}/entries")
 def update_entries(convocatoria_id: int, payload: ConvocatoriaEntriesUpdate, db: Session = Depends(get_db)):
     convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
@@ -62,12 +71,12 @@ def update_entries(convocatoria_id: int, payload: ConvocatoriaEntriesUpdate, db:
             ConvocatoriaEntry.convocatoria_id == convocatoria_id,
             ConvocatoriaEntry.swimmer_id == item.swimmer_id,
             ConvocatoriaEntry.event_type_id == item.event_type_id,
+            ConvocatoriaEntry.time_record_id == item.time_record_id,
         ).first()
         if entry:
             entry.selected = item.selected
             db.add(entry)
             updated += 1
-
     db.commit()
     return {"updated": updated}
 
@@ -83,6 +92,12 @@ def confirm_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(convocatoria)
     return convocatoria
+
+
+@router.patch("/{convocatoria_id}/skip-minimums")
+def skip_minimums(convocatoria_id: int, db: Session = Depends(get_db)):
+    return {"ok": True}
+
 
 @router.delete("/{convocatoria_id}", status_code=204)
 def delete_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):

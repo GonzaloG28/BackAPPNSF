@@ -17,86 +17,91 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
         QualifyingTime.competition_id == convocatoria.competition_id
     ).all()
 
+    no_minimums = len(qualifying_times) == 0  # "Continuar sin marcas mínimas"
+
     all_swimmers = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED).order_by(Swimmer.last_name_1).all()
+    cutoff_date = date.today() - timedelta(days=VIGENCIA_DAYS)
 
     existing_entries = {
-        (e.swimmer_id, e.event_type_id): e
+        (e.swimmer_id, e.event_type_id, e.time_record_id): e
         for e in db.query(ConvocatoriaEntry).filter(ConvocatoriaEntry.convocatoria_id == convocatoria.id).all()
     }
 
-    cutoff_date = date.today() - timedelta(days=VIGENCIA_DAYS)
     matrix = []
-
     for swimmer in all_swimmers:
-        entries = []
+        event_groups: dict[int, dict] = {}  # event_type_id -> { event_name, marks: [...] }
 
-        for qt in qualifying_times:
-            if qt.gender and swimmer.gender != qt.gender:
-                continue
-            if qt.category and qt.category != "OPEN" and swimmer.category != qt.category:
-                continue
+        if no_minimums:
+            # Sin restricción: todo el historial vigente del nadador, agrupado por prueba
+            records = db.query(TimeRecord).filter(
+                TimeRecord.swimmer_id == swimmer.id, TimeRecord.recorded_date >= cutoff_date
+            ).order_by(TimeRecord.time_seconds.asc()).all()
+            for r in records:
+                grp = event_groups.setdefault(r.event_type_id, {"event_name": r.event_type.name, "marks": []})
+                key = (swimmer.id, r.event_type_id, r.id)
+                selected = existing_entries[key].selected if key in existing_entries else False
+                grp["marks"].append({
+                    "time_record_id": r.id, "time_seconds": float(r.time_seconds),
+                    "date": r.recorded_date.isoformat(), "pool_length": r.pool_length,
+                    "selected": selected,
+                })
+        else:
+            for qt in qualifying_times:
+                if qt.gender and swimmer.gender != qt.gender:
+                    continue
+                if qt.category and qt.category != "OPEN" and swimmer.category != qt.category:
+                    continue
 
-            best = db.query(TimeRecord).filter(
-                TimeRecord.swimmer_id == swimmer.id,
-                TimeRecord.event_type_id == qt.event_type_id,
-                TimeRecord.recorded_date >= cutoff_date,  # solo tiempos vigentes (< 1 año)
-            ).order_by(TimeRecord.time_seconds.asc()).first()
-                               
-            qualifies = best is not None and float(best.time_seconds) <= float(qt.min_time_seconds)
+                q = db.query(TimeRecord).filter(
+                    TimeRecord.swimmer_id == swimmer.id,
+                    TimeRecord.event_type_id == qt.event_type_id,
+                    TimeRecord.recorded_date >= cutoff_date,
+                    TimeRecord.time_seconds <= qt.min_time_seconds,  # TODAS las que cumplen, no solo la mejor
+                )
+                if qt.pool_length:
+                    q = q.filter(TimeRecord.pool_length == qt.pool_length)
+                qualifying_records = q.order_by(TimeRecord.time_seconds.asc()).all()
 
-            existing = existing_entries.get((swimmer.id, qt.event_type_id))
-            selected = existing.selected if existing else qualifies
+                if not qualifying_records:
+                    continue
 
-            entries.append({
-                "event_type_id": qt.event_type_id,
-                "event_name": qt.event_type.name,
-                "best_time": float(best.time_seconds) if best else None,
-                "best_time_date": best.recorded_date.isoformat() if best else None,
-                "qualifying_time": float(qt.min_time_seconds),
-                "qualifies": qualifies,
-                "selected": selected,
-            })
+                grp = event_groups.setdefault(qt.event_type_id, {"event_name": qt.event_type.name, "marks": [], "qualifying_time": float(qt.min_time_seconds)})
+                for r in qualifying_records:
+                    key = (swimmer.id, qt.event_type_id, r.id)
+                    default_selected = r.id == qualifying_records[0].id  # preselecciona la mejor de las válidas
+                    selected = existing_entries[key].selected if key in existing_entries else default_selected
+                    grp["marks"].append({
+                        "time_record_id": r.id, "time_seconds": float(r.time_seconds),
+                        "date": r.recorded_date.isoformat(), "pool_length": r.pool_length,
+                        "selected": selected,
+                    })
 
-        if entries:
+        if event_groups:
             matrix.append({
-                "swimmer_id": swimmer.id,
-                "name": swimmer.full_name,
-                "status": swimmer.status.value,
-                "entries": entries,
+                "swimmer_id": swimmer.id, "name": swimmer.full_name, "status": swimmer.status.value,
+                "events": [{"event_type_id": eid, **data} for eid, data in event_groups.items()],
             })
 
     return matrix
 
 
 def sync_convocatoria_entries(db: Session, convocatoria: Convocatoria, matrix: list[dict]):
-    """
-    Persiste la matriz calculada como ConvocatoriaEntry. Crea las que faltan,
-    y ACTUALIZA el best_time_seconds/time_record_date de las que ya existían
-    (antes solo se creaban una vez y quedaban con el tiempo desactualizado).
-    """
     existing = {
-        (e.swimmer_id, e.event_type_id): e
-        for e in db.query(ConvocatoriaEntry).filter(
-            ConvocatoriaEntry.convocatoria_id == convocatoria.id
-        ).all()
+        (e.swimmer_id, e.event_type_id, e.time_record_id): e
+        for e in db.query(ConvocatoriaEntry).filter(ConvocatoriaEntry.convocatoria_id == convocatoria.id).all()
     }
-
     for row in matrix:
-        for entry in row["entries"]:
-            key = (row["swimmer_id"], entry["event_type_id"])
-            existing_entry = existing.get(key)
-
-            if existing_entry:
-                existing_entry.best_time_seconds = entry["best_time"]
-                existing_entry.time_record_date = entry["best_time_date"]
-                db.add(existing_entry)
-            else:
-                db.add(ConvocatoriaEntry(
-                    convocatoria_id=convocatoria.id,
-                    swimmer_id=row["swimmer_id"],
-                    event_type_id=entry["event_type_id"],
-                    best_time_seconds=entry["best_time"],
-                    time_record_date=entry["best_time_date"],
-                    selected=entry["selected"],
-                ))
+        for ev in row["events"]:
+            for mark in ev["marks"]:
+                key = (row["swimmer_id"], ev["event_type_id"], mark["time_record_id"])
+                if key in existing:
+                    existing[key].selected = mark["selected"]
+                    db.add(existing[key])
+                else:
+                    db.add(ConvocatoriaEntry(
+                        convocatoria_id=convocatoria.id, swimmer_id=row["swimmer_id"],
+                        event_type_id=ev["event_type_id"], time_record_id=mark["time_record_id"],
+                        best_time_seconds=mark["time_seconds"], time_record_date=mark["date"],
+                        selected=mark["selected"],
+                    ))
     db.commit()

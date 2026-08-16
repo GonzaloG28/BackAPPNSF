@@ -15,6 +15,6 @@ class QualifyingTime(Base):
     category = Column(String(50), nullable=True)
     gender = Column(Enum(SwimmerGender), nullable=True)
     min_time_seconds = Column(Numeric(10, 2), nullable=True)
-
+    pool_length = Column(Integer, nullable=True) 
     competition = relationship("Competition", back_populates="qualifying_times")
     event_type = relationship("EventType")

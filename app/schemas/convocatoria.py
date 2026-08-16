@@ -49,6 +49,7 @@ class ConvocatoriaMatrix(BaseModel):
 class EntrySelectionUpdate(BaseModel):
     swimmer_id: int
     event_type_id: int
+    time_record_id: int
     selected: bool
 
 
