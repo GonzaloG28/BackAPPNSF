@@ -11,7 +11,8 @@ from io import BytesIO
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.time_record import TimeRecord, TimeSource
-from app.schemas.time_record import TimeRecordUpdate
+from app.models.time_split import TimeSplit
+from app.schemas.time_record import TimeRecordCreate, TimeRecordUpdate
 from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut
@@ -19,6 +20,29 @@ from app.models.gym_record import GymRecord
 from app.utils.rut_validator import validate_rut, normalize_rut
 
 router = APIRouter(prefix="/swimmers", tags=["swimmers"], dependencies=[Depends(get_current_user)])
+
+SPLIT_TOLERANCE = 0.05 
+
+
+def _validate_and_build_splits(splits_in, time_seconds: float):
+    if not splits_in:
+        return None
+    cumulative = 0.0
+    built = []
+    for s in splits_in:
+        cumulative += s.segment_seconds
+        built.append(TimeSplit(
+            distance_mark=s.distance_mark,
+            segment_seconds=s.segment_seconds,
+            cumulative_seconds=round(cumulative, 2),
+        ))
+    if abs(cumulative - time_seconds) > SPLIT_TOLERANCE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La suma de los parciales ({cumulative:.2f}s) no coincide con el tiempo total ({time_seconds:.2f}s).",
+        )
+    return built
+
 
 
 # app/routers/swimmers.py
@@ -192,6 +216,9 @@ def get_swimmer_times(
         "event_name": r.event_type.name, "time_seconds": float(r.time_seconds),
         "recorded_date": r.recorded_date, "location_note": r.location_note,
         "competition_name": r.competition.name if r.competition else None,
+        "split_increment": r.split_increment,
+        "splits": [{"distance_mark": s.distance_mark, "segment_seconds": float(s.segment_seconds),
+        "cumulative_seconds": float(s.cumulative_seconds)} for s in r.splits],
     } for r in records]
 
 
@@ -317,9 +344,15 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
     if not record:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True, exclude={"splits"})
     for field, value in data.items():
         setattr(record, field, value)
+
+    if payload.splits is not None:
+        effective_total = payload.time_seconds if payload.time_seconds is not None else float(record.time_seconds)
+        splits = _validate_and_build_splits(payload.splits, effective_total)
+        record.splits = splits or []
+        record.split_increment = payload.split_increment
 
     db.add(record)
     db.commit()
@@ -328,16 +361,18 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
 
 
 @router.post("/{swimmer_id}/times")
-def create_time_record(
-    swimmer_id: int, event_type_id: int, time_seconds: float, recorded_date: date,
-    pool_length: Optional[int] = None,
-    location_note: Optional[str] = None, db: Session = Depends(get_db),
-):
+def create_time_record(swimmer_id: int, payload: TimeRecordCreate, db: Session = Depends(get_db)):
+    splits = _validate_and_build_splits(payload.splits, payload.time_seconds)
+
     record = TimeRecord(
-        swimmer_id=swimmer_id, event_type_id=event_type_id, time_seconds=time_seconds,
-        recorded_date=recorded_date, pool_length=pool_length,
-        location_note=location_note, source=TimeSource.TRAINING,
+        swimmer_id=swimmer_id, event_type_id=payload.event_type_id, time_seconds=payload.time_seconds,
+        recorded_date=payload.recorded_date, pool_length=payload.pool_length,
+        location_note=payload.location_note, source=TimeSource.TRAINING,
+        split_increment=payload.split_increment,
     )
+    if splits:
+        record.splits = splits
+
     db.add(record)
     db.commit()
     db.refresh(record)
@@ -364,12 +399,13 @@ def get_swimmer_times(swimmer_id: int, event_type_id: Optional[int] = None, sort
 
 @router.get("/{swimmer_id}/times/grouped")
 def get_times_grouped(swimmer_id: int, db: Session = Depends(get_db)):
-    """Nivel 1: solo los nombres de pruebas que el nadador tiene registradas."""
     records = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id).all()
     seen = {}
     for r in records:
-        seen[r.event_type_id] = r.event_type.name
-    return [{"event_type_id": k, "event_name": v} for k, v in seen.items()]
+        seen[r.event_type_id] = {"event_name": r.event_type.name, "distance_m": r.event_type.distance_m}
+    return [{"event_type_id": k, "event_name": v["event_name"], "distance_m": v["distance_m"]} for k, v in seen.items()]
+
+
 
 @router.delete("/{swimmer_id}/times/{time_id}", status_code=204)
 def delete_time_record(swimmer_id: int, time_id: int, db: Session = Depends(get_db)):

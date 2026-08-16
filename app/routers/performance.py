@@ -31,7 +31,7 @@ def resolve_event_type(code: str, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(event_type)
 
-    return {"id": event_type.id, "name": event_type.name}
+    return {"id": event_type.id, "name": event_type.name, "distance_m": event_type.distance_m}
 
 @router.get("/performance/{swimmer_id}/timeline")
 def get_swimmer_timeline(swimmer_id: int, event_type_id: int = None, db: Session = Depends(get_db)):
@@ -71,4 +71,7 @@ def get_evolution(swimmer_id: int, event_type_id: int, pool_length: Optional[int
         "id": r.id, "date": r.recorded_date.isoformat(), "time_seconds": float(r.time_seconds),
         "pool_length": r.pool_length,
         "label": r.competition.name if r.competition else (r.location_note or "Registro"),
+        "split_increment": r.split_increment,
+        "splits": [{"distance_mark": s.distance_mark, "segment_seconds": float(s.segment_seconds),
+        "cumulative_seconds": float(s.cumulative_seconds)} for s in r.splits],
     } for r in records]
