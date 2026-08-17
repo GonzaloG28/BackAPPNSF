@@ -81,6 +81,7 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
         if event_groups:
             matrix.append({
                 "swimmer_id": swimmer.id, "name": swimmer.full_name, "status": swimmer.status.value,
+                "category": swimmer.category,
                 "events": [{"event_type_id": eid, **data} for eid, data in event_groups.items()],
             })
 
