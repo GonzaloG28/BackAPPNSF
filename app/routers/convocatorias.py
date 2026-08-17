@@ -17,17 +17,12 @@ router = APIRouter(prefix="/convocatorias", tags=["convocatorias"], dependencies
 @router.get("")
 def list_convocatorias(db: Session = Depends(get_db)):
     convocatorias = db.query(Convocatoria).order_by(Convocatoria.created_at.desc()).all()
-    return [
-        {
-            "id": c.id,
-            "competition_id": c.competition_id,
-            "status": c.status.value,
-            "created_at": c.created_at,
-            "competition_name": c.competition.name if c.competition else None,
-            "competition_date": c.competition.date.isoformat() if c.competition else None,
-        }
-        for c in convocatorias
-    ]
+    return [{
+        "id": c.id, "competition_id": c.competition_id, "status": c.status.value, "created_at": c.created_at,
+        "competition_name": c.competition.name if c.competition else None,
+        "competition_start_date": c.competition.start_date.isoformat() if c.competition and c.competition.start_date else None,
+        "competition_end_date": c.competition.end_date.isoformat() if c.competition and c.competition.end_date else None,
+    } for c in convocatorias]
 
 @router.post("", status_code=201)
 def create_convocatoria(payload: ConvocatoriaCreate, db: Session = Depends(get_db)):
@@ -83,15 +78,24 @@ def update_entries(convocatoria_id: int, payload: ConvocatoriaEntriesUpdate, db:
 
 @router.patch("/{convocatoria_id}/confirm")
 def confirm_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):
-    convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
-    if not convocatoria:
+    c = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not c:
         raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
-
-    convocatoria.status = ConvocatoriaStatus.CONFIRMED
-    db.add(convocatoria)
+    c.status = ConvocatoriaStatus.CONFIRMED
     db.commit()
-    db.refresh(convocatoria)
-    return convocatoria
+    db.refresh(c)
+    return c
+
+
+@router.patch("/{convocatoria_id}/unconfirm")
+def unconfirm_convocatoria(convocatoria_id: int, db: Session = Depends(get_db)):
+    c = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+    c.status = ConvocatoriaStatus.DRAFT
+    db.commit()
+    db.refresh(c)
+    return c
 
 
 @router.patch("/{convocatoria_id}/skip-minimums")

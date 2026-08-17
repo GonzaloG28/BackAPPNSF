@@ -6,10 +6,14 @@ from typing import Optional
 
 class CompetitionCreate(BaseModel):
     name: str
-    date: date
+    start_date: date
+    end_date: date
     organizer: Optional[str] = None
     location: Optional[str] = None
+    pool_length: Optional[int] = None
+    categories: Optional[list[str]] = None
     max_events_per_swimmer: int = 3
+
 
 class QualifyingTimeUpdate(BaseModel):
     event_type_id: Optional[int] = None
@@ -19,7 +23,10 @@ class QualifyingTimeUpdate(BaseModel):
 
 class CompetitionUpdate(BaseModel):
     name: Optional[str] = None
-    date: date
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     organizer: Optional[str] = None
     location: Optional[str] = None
+    pool_length: Optional[int] = None
+    categories: Optional[list[str]] = None
     max_events_per_swimmer: Optional[int] = None

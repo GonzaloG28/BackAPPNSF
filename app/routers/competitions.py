@@ -25,7 +25,9 @@ def list_competitions(db: Session = Depends(get_db)):
 
 @router.post("", status_code=201)
 def create_competition(payload: CompetitionCreate, db: Session = Depends(get_db)):
-    competition = Competition(**payload.model_dump())
+    data = payload.model_dump()
+    data["date"] = data["start_date"]  # mantiene compatibilidad con el campo viejo
+    competition = Competition(**data)
     db.add(competition)
     db.commit()
     db.refresh(competition)
@@ -65,11 +67,11 @@ def update_competition(competition_id: int, payload: CompetitionUpdate, db: Sess
     competition = db.query(Competition).filter(Competition.id == competition_id).first()
     if not competition:
         raise HTTPException(status_code=404, detail="Competencia no encontrada")
-
     data = payload.model_dump(exclude_unset=True)
+    if "start_date" in data:
+        data["date"] = data["start_date"]
     for field, value in data.items():
         setattr(competition, field, value)
-
     db.add(competition)
     db.commit()
     db.refresh(competition)

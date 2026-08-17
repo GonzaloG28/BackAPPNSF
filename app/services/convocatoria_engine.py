@@ -30,7 +30,9 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
     matrix = []
     for swimmer in all_swimmers:
         event_groups: dict[int, dict] = {}  # event_type_id -> { event_name, marks: [...] }
-
+        competition = convocatoria.competition
+        if competition.categories and swimmer.category not in competition.categories:
+            continue
         if no_minimums:
             # Sin restricción: todo el historial vigente del nadador, agrupado por prueba
             records = db.query(TimeRecord).filter(
