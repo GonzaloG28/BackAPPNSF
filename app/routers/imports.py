@@ -171,8 +171,6 @@ async def import_roster_mapped(file: UploadFile = File(...), mapping: str = Form
 
 @router.post("/roster/apply-saved-mapping")
 async def import_with_saved_mapping(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Usa la plantilla guardada — el flujo diario del profesor, sin remapear cada vez.
-    Solo rellena campos vacíos en nadadores existentes, nunca sobreescribe datos ya cargados."""
     config = db.query(ImportMappingConfig).first()
     if not config:
         raise HTTPException(status_code=400, detail="No hay una plantilla de mapeo configurada aún")
@@ -187,7 +185,8 @@ async def import_with_saved_mapping(file: UploadFile = File(...), db: Session = 
         for excel_col, db_field in config.mapping.items():
             if db_field and excel_col in df.columns:
                 value = row.get(excel_col)
-                mapped[db_field] = None if pd.isna(value) else value
+                mapped[db_field] = None if pd.isna(value) else str(value).strip() if isinstance(value, str) else value
+        # Ya no exige que mapped tenga campos obligatorios — se procesa tal cual, vacío incluido
         rows.append(mapped)
 
     matched, created, unmatched, _ = process_roster_import_upsert(db, rows, None)

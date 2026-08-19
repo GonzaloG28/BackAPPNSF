@@ -1,6 +1,6 @@
 # app/services/import_service.py
 from sqlalchemy.orm import Session
-from app.models.swimmer import Swimmer
+from app.models.swimmer import Swimmer, SwimmerStatus
 from app.services.matching_service import find_swimmer_match
 
 
@@ -23,13 +23,20 @@ def update_swimmer_from_row(db: Session, swimmer: Swimmer, row: dict):
     return swimmer
 
 
-def create_swimmer_from_row(db: Session, row: dict) -> Swimmer:
+def create_swimmer_from_row(db, row: dict):
     new_swimmer = Swimmer(
-        first_name_1=row.get("first_name"),
-        last_name_1=row.get("last_name"),
+        first_name_1=row.get("first_name") or "Sin nombre",
+        last_name_1=row.get("last_name") or "Sin apellido",
+        first_name_2=row.get("first_name_2"),
+        last_name_2=row.get("last_name_2"),
         birth_date=row.get("birth_date"),
         document_id=row.get("document_id"),
-        status="ACTIVE"
+        gender=row.get("gender"),
+        comuna=row.get("comuna"),
+        institution=row.get("institution"),
+        phone=row.get("phone"),
+        email=row.get("email"),
+        status=SwimmerStatus.ACTIVE,
     )
     if new_swimmer.birth_date:
         new_swimmer.category = new_swimmer.compute_category()
@@ -95,22 +102,18 @@ def register_time_record(db: Session, swimmer_id: int, distance_m: int, stroke, 
 
 
 def upsert_swimmer_fill_missing(db, swimmer, row: dict) -> bool:
-    """
-    Actualiza SOLO los campos que el nadador tiene vacíos (None o string vacío).
-    Nunca sobreescribe un dato ya cargado. Devuelve True si cambió algo.
-    """
     changed = False
-    fillable_fields = ["first_name", "last_name", "document_id", "birth_date",
-                        "comuna", "institution", "phone", "email"]
-    # nota: first_name/last_name mapean a first_name_1/last_name_1 en el modelo real
-    field_map = {"first_name": "first_name_1", "last_name": "last_name_1"}
-
-    for key in fillable_fields:
-        model_field = field_map.get(key, key)
-        current_value = getattr(swimmer, model_field, None)
-        new_value = row.get(key)
-
-        is_empty = current_value is None or (isinstance(current_value, str) and current_value.strip() == "")
+    field_map = {
+        "first_name": "first_name_1", "last_name": "last_name_1",
+        "first_name_2": "first_name_2", "last_name_2": "last_name_2",
+        "document_id": "document_id", "birth_date": "birth_date",
+        "gender": "gender", "comuna": "comuna", "institution": "institution",
+        "phone": "phone", "email": "email",
+    }
+    for row_key, model_field in field_map.items():
+        current = getattr(swimmer, model_field, None)
+        new_value = row.get(row_key)
+        is_empty = current is None or (isinstance(current, str) and current.strip() == "") or current in ("Sin nombre", "Sin apellido")
         if is_empty and new_value:
             setattr(swimmer, model_field, new_value)
             changed = True

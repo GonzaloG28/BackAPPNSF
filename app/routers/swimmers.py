@@ -16,11 +16,21 @@ from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut
 from app.models.gym_record import GymRecord
+from app.schemas.export import RosterExportRequest
 from app.utils.rut_validator import validate_rut, normalize_rut
 
 router = APIRouter(prefix="/swimmers", tags=["swimmers"], dependencies=[Depends(get_current_user)])
 
 SPLIT_TOLERANCE = 0.05  # segundos de margen entre suma de parciales y tiempo total
+
+FIELD_LABELS = {
+    "first_name_1": "Primer Nombre", "first_name_2": "Segundo Nombre",
+    "last_name_1": "Primer Apellido", "last_name_2": "Segundo Apellido",
+    "document_id": "RUT", "birth_date": "Fecha de Nacimiento", "gender": "Género",
+    "category": "Categoría", "comuna": "Comuna", "institution": "Institución",
+    "phone": "Teléfono", "email": "Correo Electrónico", "profile": "Perfil",
+    "is_federated": "Federado", "status": "Estado",
+}
 
 
 def _validate_and_build_splits(splits_in, time_seconds: float):
@@ -212,31 +222,64 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
         )
 
 
-@router.get("/export/clean")
-def export_clean_roster(db: Session = Depends(get_db)):
-    swimmers = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED).all()
+@router.post("/export/custom")
+def export_custom_roster(payload: RosterExportRequest, db: Session = Depends(get_db)):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+
+    query = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED if not payload.status else Swimmer.status == payload.status)
+    if payload.category:
+        query = query.filter(Swimmer.category == payload.category)
+    if payload.profile:
+        query = query.filter(Swimmer.profile == payload.profile)
+    if payload.is_federated is not None:
+        query = query.filter(Swimmer.is_federated == payload.is_federated)
+
+    swimmers = query.order_by(Swimmer.last_name_1).all()
+    fields = payload.fields or list(FIELD_LABELS.keys())
 
     wb = Workbook()
     ws = wb.active
-    headers = ["Nombres", "Apellidos", "RUT", "Fecha de Nacimiento", "Teléfono", "Correo", "Institución", "Estado"]
-    ws.append(headers)
+    ws.title = "Nadadores"
 
-    for s in swimmers:
-        ws.append([
-            f"{s.first_name_1} {s.first_name_2 or ''}".strip(),
-            f"{s.last_name_1} {s.last_name_2 or ''}".strip(),
-            s.document_id or "", s.birth_date.strftime("%d/%m/%Y") if s.birth_date else "",
-            s.phone or "", s.email or "", s.institution or "",
-            "Activo" if s.status.value == "ACTIVE" else "Congelado",
-        ])
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    for col, f in enumerate(fields, start=1):
+        cell = ws.cell(row=1, column=col, value=FIELD_LABELS.get(f, f))
+        cell.fill = header_fill
+        cell.font = Font(color="FFFFFF", bold=True)
+
+    def get_value(s, field):
+        if field == "birth_date":
+            return s.birth_date.strftime("%d/%m/%Y") if s.birth_date else ""
+        if field == "gender":
+            return s.gender.value if s.gender else ""
+        if field == "profile":
+            return {"COMPETITIVE": "Competitivo", "FORMATIVE": "Formativo"}.get(s.profile.value if s.profile else None, "")
+        if field == "is_federated":
+            return "Sí" if s.is_federated else "No"
+        if field == "status":
+            return {"ACTIVE": "Activo", "FROZEN": "Congelado"}.get(s.status.value, s.status.value)
+        return getattr(s, field, "") or ""
+
+    for row_num, s in enumerate(swimmers, start=2):
+        for col, f in enumerate(fields, start=1):
+            ws.cell(row=row_num, column=col, value=get_value(s, f))
 
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
+
     return StreamingResponse(
         buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="nadadores.xlsx"'}
+        headers={"Content-Disposition": 'attachment; filename="nadadores_export.xlsx"'}
     )
+
+
+@router.get("/export/fields")
+def get_export_fields():
+    return [{"value": k, "label": v} for k, v in FIELD_LABELS.items()]
 
 
 # ──────────────────────────────────────────────────────────────
