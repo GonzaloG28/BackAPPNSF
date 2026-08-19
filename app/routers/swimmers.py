@@ -346,7 +346,7 @@ def get_times_grouped(swimmer_id: int, db: Session = Depends(get_db)):
     records = db.query(TimeRecord).filter(TimeRecord.swimmer_id == swimmer_id).all()
     seen = {}
     for r in records:
-        seen[r.event_type_id] = {"event_name": r.event_type.name, "distance_m": r.event_type.distance_m}
+        seen[r.event_type_id] = {"event_name": r.event_type.name, "distance_m": r.event_type.distance_m,}
     return [{"event_type_id": k, "event_name": v["event_name"], "distance_m": v["distance_m"]} for k, v in seen.items()]
 
 
@@ -374,6 +374,23 @@ def get_swimmer_times(
     records = query.order_by(order_map.get(sort, TimeRecord.recorded_date.desc())).all()
 
     return [_serialize_time_record(r) for r in records]
+
+
+@router.get("/{swimmer_id}/times/{time_id}/splits")
+def get_time_splits(swimmer_id: int, time_id: int, db: Session = Depends(get_db)):
+    record = db.query(TimeRecord).filter(
+        TimeRecord.id == time_id, TimeRecord.swimmer_id == swimmer_id
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    return {
+        "split_increment": record.split_increment,
+        "splits": [
+            {"distance_mark": s.distance_mark, "segment_seconds": float(s.segment_seconds), "cumulative_seconds": float(s.cumulative_seconds)}
+            for s in sorted(record.splits, key=lambda x: x.distance_mark)
+        ],
+    }
 
 
 @router.post("/{swimmer_id}/times")
