@@ -22,6 +22,28 @@ class SwimmerProfile(str, enum.Enum):
     COMPETITIVE = "COMPETITIVE"
     FORMATIVE = "FORMATIVE"
 
+
+CATEGORY_RULES = [
+    ("Infantil C",           lambda age: 7  <= age <= 9),
+    ("Infantil A",           lambda age: age == 10),
+    ("Infantil B1",          lambda age: age == 11),
+    ("Infantil B2",          lambda age: age == 12),
+    ("Juvenil A",            lambda age: 13 <= age <= 14),
+    ("Juvenil B",            lambda age: 15 <= age <= 17),
+    ("Todo Competidor",      lambda age: age >= 18),
+]
+ 
+# Subcategoría oficial → categoría general (agrupador de la tabla)
+GENERAL_CATEGORY_MAP = {
+    "Infantil C":      "Menores",
+    "Infantil A":      "Infantil",
+    "Infantil B1":     "Infantil",
+    "Infantil B2":     "Infantil",
+    "Juvenil A":       "Juvenil",
+    "Juvenil B":       "Juvenil",
+    "Todo Competidor": "Todo Competidor",
+}
+
 class Swimmer(Base):
     __tablename__ = "swimmers"
 
@@ -33,7 +55,7 @@ class Swimmer(Base):
     birth_date = Column(Date, nullable=True)
     document_id = Column(String(50), unique=True, nullable=True, index=True)
     gender = Column(Enum(SwimmerGender), nullable=True)
-    category = Column(String(50), nullable=True)  # se recalcula, no se edita a mano
+    category = Column(String(50), nullable=True) 
     comuna = Column(String(100), nullable=True)
     institution = Column(String(150), nullable=True)  # colegio/universidad/club, opcional
     phone = Column(String(30), nullable=True)
@@ -58,16 +80,27 @@ class Swimmer(Base):
         surnames = " ".join(filter(None, [self.last_name_1, self.last_name_2]))
         return f"{names} {surnames}".strip()
 
-    def compute_category(self) -> str:
+    def compute_age(self) -> int | None:
+        """Edad por AÑO CALENDARIO (no por fecha exacta de cumpleaños)."""
         if not self.birth_date:
             return None
-        today = date.today()
-        age = today.year - self.birth_date.year - ((today.month, today.day) < (self.birth_date.month, self.birth_date.day))
-        if age < 13:
-            return "Infantil"
-        elif 13 <= age <= 14:
-            return "Juvenil A"
-        elif 15 <= age <= 17:
-            return "Juvenil B"
-        else:
-            return "Todo Competidor"
+        return date.today().year - self.birth_date.year
+ 
+    def compute_category(self) -> str | None:
+        """Subcategoría oficial (Infantil C, Infantil A, Infantil B1, Infantil B2,
+        Juvenil A, Juvenil B, Todo Competidor) según edad por año calendario."""
+        age = self.compute_age()
+        if age is None:
+            return None
+        for label, rule in CATEGORY_RULES:
+            if rule(age):
+                return label
+        return None
+ 
+    @property
+    def general_category(self) -> str | None:
+        """Categoría general agrupadora: Menores, Infantil, Juvenil, Todo Competidor."""
+        if not self.category:
+            return None
+        return GENERAL_CATEGORY_MAP.get(self.category)
+ 
