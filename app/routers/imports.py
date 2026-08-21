@@ -36,8 +36,9 @@ DB_FIELDS_CATALOG = [
     {"value": "last_name_2", "label": "Segundo apellido"},
     {"value": "document_id", "label": "RUT"},
     {"value": "birth_date", "label": "Fecha de nacimiento"},
+    {"value": "gender", "label": "Género"},
     {"value": "comuna", "label": "Comuna"},
-    {"value": "institution", "label": "Institución"},
+    {"value": "institution", "label": "Institución / Colegio / Club"},
     {"value": "phone", "label": "Teléfono"},
     {"value": "email", "label": "Correo electrónico"},
 ]
@@ -134,6 +135,12 @@ def delete_mapping_sample_file(db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+
+@router.delete("/mapping-config")
+def delete_mapping_config(db: Session = Depends(get_db)):
+    db.query(ImportMappingConfig).delete()
+    db.commit()
+    return {"ok": True}
 
 @router.post("/roster/preview")
 async def preview_roster_import(file: UploadFile = File(...)):
