@@ -16,3 +16,5 @@ from app.models.attendance_log import AttendanceLog
 from app.models.gym_record import Exercise, GymRecord
 from app.models.import_config import ImportMappingConfig
 from app.models.time_split import TimeSplit
+from app.models.custom_group import CustomGroup
+from app.models.training_sessions import TrainingSession
