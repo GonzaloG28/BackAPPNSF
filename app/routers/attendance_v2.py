@@ -3,6 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import date, timedelta
 
+from fastapi import Query
+from datetime import datetime as dt
+
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.personal_schedule import PersonalSchedule
@@ -12,12 +15,15 @@ router = APIRouter(prefix="/attendance-v2", tags=["attendance"], dependencies=[D
 
 
 @router.get("/today")
-def get_today_checklist(db: Session = Depends(get_db)):
-    today = date.today()
-    weekday = today.weekday()
+def get_today_checklist(
+    date_param: str | None = Query(None, alias="date"),
+    db: Session = Depends(get_db),
+):
+    target_date = dt.strptime(date_param, "%Y-%m-%d").date() if date_param else date.today()
+    weekday = target_date.weekday()
 
     swimmers = db.query(Swimmer).filter(Swimmer.status == SwimmerStatus.ACTIVE).order_by(Swimmer.last_name_1).all()
-    existing = {l.swimmer_id: l.complied for l in db.query(AttendanceLog).filter(AttendanceLog.date == today).all()}
+    existing = {l.swimmer_id: l.complied for l in db.query(AttendanceLog).filter(AttendanceLog.date == target_date).all()}
 
     schedules = {
         s.swimmer_id: s.shift.value
@@ -28,7 +34,7 @@ def get_today_checklist(db: Session = Depends(get_db)):
     for s in swimmers:
         expected_shift = schedules.get(s.id, "NONE")
         if expected_shift == "NONE":
-            continue  # solo lista a quienes tienen algo programado hoy
+            continue  # solo lista a quienes tienen algo programado ese día
         result.append({
             "swimmer_id": s.id,
             "name": s.full_name,
@@ -40,7 +46,9 @@ def get_today_checklist(db: Session = Depends(get_db)):
 
 @router.post("")
 def register_daily_attendance(payload: dict, db: Session = Depends(get_db)):
-    today = date.today()
+    date_param = payload.get("date")
+    target_date = dt.strptime(date_param, "%Y-%m-%d").date() if date_param else date.today()
+
     records = payload.get("records", [])
     saved = 0
 
@@ -49,13 +57,13 @@ def register_daily_attendance(payload: dict, db: Session = Depends(get_db)):
         complied = bool(r["complied"])
 
         existing = db.query(AttendanceLog).filter(
-            AttendanceLog.swimmer_id == swimmer_id, AttendanceLog.date == today
+            AttendanceLog.swimmer_id == swimmer_id, AttendanceLog.date == target_date
         ).first()
 
         if existing:
             existing.complied = complied
         else:
-            db.add(AttendanceLog(swimmer_id=swimmer_id, date=today, complied=complied))
+            db.add(AttendanceLog(swimmer_id=swimmer_id, date=target_date, complied=complied))
         saved += 1
 
     db.commit()
