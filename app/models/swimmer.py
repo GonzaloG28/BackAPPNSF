@@ -74,6 +74,9 @@ class Swimmer(Base):
     attendances = relationship("Attendance", back_populates="swimmer", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="swimmer", cascade="all, delete-orphan")
 
+    photo_base64 = Column(String, nullable=True) 
+
+
     @property
     def full_name(self) -> str:
         names = " ".join(filter(None, [self.first_name_1, self.first_name_2]))

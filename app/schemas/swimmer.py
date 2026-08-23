@@ -68,4 +68,5 @@ class SwimmerOut(SwimmerBase):
     category: Optional[str] = None
     status: SwimmerStatusEnum
     status_reason: Optional[str] = None
+    photo_base64: Optional[str] = None
     created_at: datetime

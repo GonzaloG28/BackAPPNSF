@@ -6,6 +6,10 @@ from datetime import datetime, date
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from io import BytesIO
+from pydantic import BaseModel
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
@@ -31,6 +35,9 @@ FIELD_LABELS = {
     "phone": "Teléfono", "email": "Correo Electrónico", "profile": "Perfil",
     "is_federated": "Federado", "status": "Estado",
 }
+
+class PhotoUpload(BaseModel):
+    photo_base64: str
 
 
 def _validate_and_build_splits(splits_in, time_seconds: float):
@@ -224,10 +231,6 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
 
 @router.post("/export/custom")
 def export_custom_roster(payload: RosterExportRequest, db: Session = Depends(get_db)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
-    from fastapi.responses import StreamingResponse
-    from io import BytesIO
 
     query = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED if not payload.status else Swimmer.status == payload.status)
     if payload.category:
@@ -497,3 +500,34 @@ def delete_all_times_for_event(swimmer_id: int, event_type_id: int, db: Session 
         TimeRecord.event_type_id == event_type_id,
     ).delete()
     db.commit()
+
+
+    
+
+@router.put("/{swimmer_id}/photo")
+def upload_swimmer_photo(swimmer_id: int, payload: PhotoUpload, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+
+    # Límite de tamaño razonable (~2MB en base64)
+    if len(payload.photo_base64) > 2_800_000:
+        raise HTTPException(status_code=400, detail="La imagen es demasiado grande (máx. ~2MB)")
+
+    swimmer.photo_base64 = payload.photo_base64
+    db.add(swimmer)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{swimmer_id}/photo")
+def delete_swimmer_photo(swimmer_id: int, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+    swimmer.photo_base64 = None
+    db.add(swimmer)
+    db.commit()
+    return {"ok": True}
+
+
