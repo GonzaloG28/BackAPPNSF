@@ -6,7 +6,7 @@ from datetime import date
 
 from app.core.deps import get_db, get_current_user
 from app.models.custom_group import CustomGroup
-from app.models.training_sessions import TrainingSession
+from app.models.training_sessions import TrainingSessions
 from app.models.competition import Competition
 from app.models.convocatoria import Convocatoria, ConvocatoriaStatus
 from app.models.convocatoria_entry import ConvocatoriaEntry
@@ -54,9 +54,9 @@ def get_month_data(year: int, month: int, db: Session = Depends(get_db)):
     ).all()
 
     # Volumen por día del mes
-    sessions = db.query(TrainingSession).filter(
-        extract('year', TrainingSession.date) == year,
-        extract('month', TrainingSession.date) == month,
+    sessions = db.query(TrainingSessions).filter(
+        extract('year', TrainingSessions.date) == year,
+        extract('month', TrainingSessions.date) == month,
     ).all()
 
     volume_by_day: dict[str, int] = {}
@@ -114,7 +114,7 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
         }
 
     # Sesiones de entrenamiento de ese día
-    sessions = db.query(TrainingSession).filter(TrainingSession.date == target_date).all()
+    sessions = db.query(TrainingSessions).filter(TrainingSessions.date == target_date).all()
 
     total_volume = sum(s.total_volume_m or 0 for s in sessions)
 
@@ -139,7 +139,7 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
 # ── CRUD de sesiones ─────────────────────────────────────
 @router.post("/sessions", status_code=201)
 def create_session(payload: TrainingSessionCreate, db: Session = Depends(get_db)):
-    session_obj = TrainingSession(**payload.model_dump())
+    session_obj = TrainingSessions(**payload.model_dump())
     db.add(session_obj)
     db.commit()
     db.refresh(session_obj)
@@ -147,7 +147,7 @@ def create_session(payload: TrainingSessionCreate, db: Session = Depends(get_db)
 
 @router.patch("/sessions/{session_id}")
 def update_session(session_id: int, payload: TrainingSessionUpdate, db: Session = Depends(get_db)):
-    session_obj = db.query(TrainingSession).filter(TrainingSession.id == session_id).first()
+    session_obj = db.query(TrainingSessions).filter(TrainingSessions.id == session_id).first()
     if not session_obj:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -159,5 +159,5 @@ def update_session(session_id: int, payload: TrainingSessionUpdate, db: Session 
 
 @router.delete("/sessions/{session_id}", status_code=204)
 def delete_session(session_id: int, db: Session = Depends(get_db)):
-    db.query(TrainingSession).filter(TrainingSession.id == session_id).delete()
+    db.query(TrainingSessions).filter(TrainingSessions.id == session_id).delete()
     db.commit()

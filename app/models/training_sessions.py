@@ -14,7 +14,7 @@ class TargetType(str, enum.Enum):
     CATEGORY = "CATEGORY"
     CUSTOM_GROUP = "CUSTOM_GROUP"
 
-class TrainingSession(Base):
+class TrainingSessions(Base):
     __tablename__ = "training_sessions_plan"
 
     id = Column(Integer, primary_key=True, index=True)
