@@ -26,3 +26,9 @@ class TrainingSessionCreate(BaseModel):
 
 class TrainingSessionUpdate(TrainingSessionCreate):
     pass
+
+# --- NUEVO ---
+class DayNotePayload(BaseModel):
+    profile: str
+    category: str
+    notes: str

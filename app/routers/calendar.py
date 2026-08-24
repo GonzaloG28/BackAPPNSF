@@ -1,8 +1,9 @@
 # app/routers/calendar.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import extract, func
-from datetime import date
+from sqlalchemy import extract
+from datetime import date, datetime
+from pydantic import BaseModel
 
 from app.core.deps import get_db, get_current_user
 from app.models.custom_group import CustomGroup
@@ -10,12 +11,11 @@ from app.models.training_sessions import TrainingSessions
 from app.models.competition import Competition
 from app.models.convocatoria import Convocatoria, ConvocatoriaStatus
 from app.models.convocatoria_entry import ConvocatoriaEntry
-from app.schemas.calendar import CustomGroupCreate, TrainingSessionCreate, TrainingSessionUpdate
+from app.schemas.calendar import CustomGroupCreate, TrainingSessionCreate, TrainingSessionUpdate, DayNotePayload
 from app.services.holidays_cl import get_holidays_for_year
 from app.models.day_note import DayNote
 
 router = APIRouter(prefix="/calendar", tags=["calendar"], dependencies=[Depends(get_current_user)])
-
 
 # ── Feriados ──────────────────────────────────────────
 @router.get("/holidays/{year}")
@@ -45,27 +45,43 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
 # ── Vista mensual ──────────────────────────────────────
 @router.get("/month/{year}/{month}")
 def get_month_data(year: int, month: int, db: Session = Depends(get_db)):
-    # Competencias que se solapan con este mes
     from calendar import monthrange
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
 
+    # Competencias que se solapan con este mes
     competitions = db.query(Competition).filter(
         Competition.start_date <= last_day, Competition.end_date >= first_day
     ).all()
 
-    # Volumen por día del mes
+    # Sesiones del mes
     sessions = db.query(TrainingSessions).filter(
         extract('year', TrainingSessions.date) == year,
         extract('month', TrainingSessions.date) == month,
     ).all()
 
-    volume_by_day: dict[str, int] = {}
+    # Volumen desglosado por día, perfil y categoría
+    volume_by_day = {}
+    total_month = 0
+
     for s in sessions:
         d = s.date.isoformat()
-        volume_by_day[d] = volume_by_day.get(d, 0) + (s.total_volume_m or 0)
+        if d not in volume_by_day:
+            volume_by_day[d] = {"COMPETITIVE": {}, "FORMATIVE": {}}
+        
+        # Obtener perfil y categoría (con fallbacks de seguridad)
+        profile_key = s.profile.value if s.profile else "FORMATIVE"
+        category_key = s.target_category or "General"
+        vol = s.total_volume_m or 0
 
-    total_month = sum(volume_by_day.values())
+        if profile_key not in volume_by_day[d]:
+             volume_by_day[d][profile_key] = {}
+        
+        if category_key not in volume_by_day[d][profile_key]:
+            volume_by_day[d][profile_key][category_key] = 0
+
+        volume_by_day[d][profile_key][category_key] += vol
+        total_month += vol
 
     return {
         "competitions": [
@@ -81,10 +97,9 @@ def get_month_data(year: int, month: int, db: Session = Depends(get_db)):
 # ── Detalle de un día ───────────────────────────────────
 @router.get("/day/{iso_date}")
 def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
-    from datetime import datetime
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
 
-    # Competencia (si el día cae dentro de un rango start_date-end_date)
+    # Competencia
     competition = db.query(Competition).filter(
         Competition.start_date <= target_date, Competition.end_date >= target_date
     ).first()
@@ -114,14 +129,28 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
             "swimmers_confirmed": swimmers_confirmed,
         }
 
-    # Sesiones de entrenamiento de ese día
+    # Sesiones de entrenamiento
     sessions = db.query(TrainingSessions).filter(TrainingSessions.date == target_date).all()
 
-    total_volume = sum(s.total_volume_m or 0 for s in sessions)
+    # Volumen desglosado por grupo y categoría para el detalle del día
+    volume_by_group = {"COMPETITIVE": {}, "FORMATIVE": {}}
+    for s in sessions:
+        profile_key = s.profile.value if s.profile else "FORMATIVE"
+        category_key = s.target_category or "General"
+        vol = s.total_volume_m or 0
+
+        if profile_key not in volume_by_group:
+            volume_by_group[profile_key] = {}
+            
+        if category_key not in volume_by_group[profile_key]:
+            volume_by_group[profile_key][category_key] = 0
+
+        volume_by_group[profile_key][category_key] += vol
 
     return {
         "date": iso_date,
         "competition": competition_data,
+        "volume_by_group": volume_by_group,
         "sessions": [
             {
                 "id": s.id, "shift": s.shift.value, "profile": s.profile.value,
@@ -132,37 +161,56 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
                 "warmup_text": s.warmup_text, "technique_text": s.technique_text,
                 "work1_text": s.work1_text, "work2_text": s.work2_text, "cooldown_text": s.cooldown_text,
             } for s in sessions
-        ],
-        "total_volume_m": total_volume,
+        ]
     }
 
 
-
+# ── Notas del día (Desglosadas por perfil y categoría) ──
 @router.get("/day/{iso_date}/notes")
-def get_day_notes(iso_date: str, db: Session = Depends(get_db)):
-    from datetime import datetime
+def get_day_notes(
+    iso_date: str, 
+    profile: str = Query(...), 
+    category: str = Query(...), 
+    db: Session = Depends(get_db)
+):
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
-    note = db.query(DayNote).filter(DayNote.date == target_date).first()
+    note = db.query(DayNote).filter(
+        DayNote.date == target_date,
+        DayNote.profile == profile,
+        DayNote.category == category
+    ).first()
+    
     return {"notes": note.notes if note else ""}
 
+
 @router.put("/day/{iso_date}/notes")
-def save_day_notes(iso_date: str, payload: dict, db: Session = Depends(get_db)):
-    from datetime import datetime
+def save_day_notes(iso_date: str, payload: DayNotePayload, db: Session = Depends(get_db)):
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
-    note = db.query(DayNote).filter(DayNote.date == target_date).first()
+    
+    note = db.query(DayNote).filter(
+        DayNote.date == target_date,
+        DayNote.profile == payload.profile,
+        DayNote.category == payload.category
+    ).first()
+    
     if note:
-        note.notes = payload.get("notes", "")
+        note.notes = payload.notes
     else:
-        note = DayNote(date=target_date, notes=payload.get("notes", ""))
+        note = DayNote(
+            date=target_date, 
+            profile=payload.profile, 
+            category=payload.category, 
+            notes=payload.notes
+        )
         db.add(note)
+        
     db.commit()
     return {"ok": True}
 
 
-
+# ── Resumen de hoy ───────────────────────────────────────
 @router.get("/today-summary")
 def today_summary(db: Session = Depends(get_db)):
-    from datetime import date
     today = date.today()
     sessions = db.query(TrainingSessions).filter(TrainingSessions.date == today).all()
     return {
