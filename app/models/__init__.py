@@ -18,3 +18,4 @@ from app.models.import_config import ImportMappingConfig
 from app.models.time_split import TimeSplit
 from app.models.custom_group import CustomGroup
 from app.models.training_sessions import TrainingSessions
+from app.models.day_note import DayNote

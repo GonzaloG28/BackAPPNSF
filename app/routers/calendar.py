@@ -12,6 +12,7 @@ from app.models.convocatoria import Convocatoria, ConvocatoriaStatus
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.calendar import CustomGroupCreate, TrainingSessionCreate, TrainingSessionUpdate
 from app.services.holidays_cl import get_holidays_for_year
+from app.models.day_note import DayNote
 
 router = APIRouter(prefix="/calendar", tags=["calendar"], dependencies=[Depends(get_current_user)])
 
@@ -135,6 +136,42 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
         "total_volume_m": total_volume,
     }
 
+
+
+@router.get("/day/{iso_date}/notes")
+def get_day_notes(iso_date: str, db: Session = Depends(get_db)):
+    from datetime import datetime
+    target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    note = db.query(DayNote).filter(DayNote.date == target_date).first()
+    return {"notes": note.notes if note else ""}
+
+@router.put("/day/{iso_date}/notes")
+def save_day_notes(iso_date: str, payload: dict, db: Session = Depends(get_db)):
+    from datetime import datetime
+    target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    note = db.query(DayNote).filter(DayNote.date == target_date).first()
+    if note:
+        note.notes = payload.get("notes", "")
+    else:
+        note = DayNote(date=target_date, notes=payload.get("notes", ""))
+        db.add(note)
+    db.commit()
+    return {"ok": True}
+
+
+
+@router.get("/today-summary")
+def today_summary(db: Session = Depends(get_db)):
+    from datetime import date
+    today = date.today()
+    sessions = db.query(TrainingSessions).filter(TrainingSessions.date == today).all()
+    return {
+        "date": today.isoformat(),
+        "has_competitive": any(s.profile.value == "COMPETITIVE" for s in sessions),
+        "has_formative": any(s.profile.value == "FORMATIVE" for s in sessions),
+        "competitive_count": sum(1 for s in sessions if s.profile.value == "COMPETITIVE"),
+        "formative_count": sum(1 for s in sessions if s.profile.value == "FORMATIVE"),
+    }
 
 # ── CRUD de sesiones ─────────────────────────────────────
 @router.post("/sessions", status_code=201)
