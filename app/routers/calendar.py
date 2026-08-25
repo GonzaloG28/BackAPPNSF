@@ -167,45 +167,39 @@ def get_day_detail(iso_date: str, db: Session = Depends(get_db)):
 
 # ── Notas del día (Desglosadas por perfil y categoría) ──
 @router.get("/day/{iso_date}/notes")
-def get_day_notes(
-    iso_date: str, 
-    profile: str = Query(...), 
-    category: str = Query(...), 
-    db: Session = Depends(get_db)
-):
+def get_day_notes(iso_date: str, profile: str, category: str, db: Session = Depends(get_db)):
+    from datetime import datetime
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
     note = db.query(DayNote).filter(
-        DayNote.date == target_date,
-        DayNote.profile == profile,
-        DayNote.category == category
+        DayNote.date == target_date, DayNote.profile == profile, DayNote.category == category
     ).first()
-    
     return {"notes": note.notes if note else ""}
 
 
 @router.put("/day/{iso_date}/notes")
-def save_day_notes(iso_date: str, payload: DayNotePayload, db: Session = Depends(get_db)):
+def save_day_notes(iso_date: str, payload: dict, db: Session = Depends(get_db)):
+    from datetime import datetime
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
-    
+    profile, category, notes = payload["profile"], payload["category"], payload.get("notes", "")
+
     note = db.query(DayNote).filter(
-        DayNote.date == target_date,
-        DayNote.profile == payload.profile,
-        DayNote.category == payload.category
+        DayNote.date == target_date, DayNote.profile == profile, DayNote.category == category
     ).first()
-    
     if note:
-        note.notes = payload.notes
+        note.notes = notes
     else:
-        note = DayNote(
-            date=target_date, 
-            profile=payload.profile, 
-            category=payload.category, 
-            notes=payload.notes
-        )
+        note = DayNote(date=target_date, profile=profile, category=category, notes=notes)
         db.add(note)
-        
     db.commit()
     return {"ok": True}
+
+
+router.get("/day/{iso_date}/all-notes")
+def get_all_day_notes(iso_date: str, db: Session = Depends(get_db)):
+    from datetime import datetime
+    target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    notes = db.query(DayNote).filter(DayNote.date == target_date, DayNote.notes.isnot(None), DayNote.notes != "").all()
+    return [{"profile": n.profile, "category": n.category, "notes": n.notes} for n in notes]
 
 
 # ── Resumen de hoy ───────────────────────────────────────
