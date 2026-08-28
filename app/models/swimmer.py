@@ -74,7 +74,11 @@ class Swimmer(Base):
     attendances = relationship("Attendance", back_populates="swimmer", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="swimmer", cascade="all, delete-orphan")
 
-    photo_base64 = Column(String, nullable=True) 
+    photo_base64 = Column(String, nullable=True)
+
+    hashed_password = Column(String(255), nullable=True) 
+    must_change_password = Column(Boolean, nullable=False, default=True)
+    payment_active = Column(Boolean, nullable=False, default=False) 
 
 
     @property

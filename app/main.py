@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 import app.models
 
-from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar
+from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self
 
 app = FastAPI(title="SwimAI API", version="0.1.0")
 
@@ -37,6 +37,8 @@ app.include_router(gym.exercises_router)
 app.include_router(performance.router)
 app.include_router(attendance_v2.router)
 app.include_router(calendar.router)
+app.include_router(swimmer_auth.router)
+app.include_router(swimmer_self.router)
 
 @app.get("/")
 def root():

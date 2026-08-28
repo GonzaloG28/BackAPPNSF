@@ -2,11 +2,15 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from jose import JWTError
+from app.core.swimmer_security import create_swimmer_token
+from jose import JWTError, jwt
 
 from app.database import SessionLocal
 from app.core.security import decode_access_token
+from app.models.swimmer import Swimmer
+from app.config import settings
 from app.models.user import User
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -37,3 +41,19 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+def get_current_swimmer(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Swimmer:
+    from app.models.swimmer import Swimmer
+    credentials_exception = HTTPException(status_code=401, detail="Credencial inválida")
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "swimmer":
+            raise credentials_exception
+        swimmer_id = payload.get("sub")
+    except JWTError:
+        raise credentials_exception
+
+    swimmer = db.query(Swimmer).filter(Swimmer.id == int(swimmer_id)).first()
+    if swimmer is None:
+        raise credentials_exception
+    return swimmer
