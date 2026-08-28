@@ -1,7 +1,7 @@
 # app/routers/swimmer_auth.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.core.deps import get_db
+from app.core.deps import get_db, get_current_swimmer
 from app.core.security import hash_password, verify_password
 from app.core.swimmer_security import create_swimmer_token
 from app.models.swimmer import Swimmer
@@ -36,3 +36,32 @@ def swimmer_login(payload: SwimmerLoginRequest, db: Session = Depends(get_db)):
 
     token = create_swimmer_token(swimmer.id)
     return SwimmerLoginResponse(access_token=token, must_change_password=swimmer.must_change_password)
+
+
+
+@router.post("/change-password")
+def change_password(
+    payload: SwimmerChangePasswordRequest,
+    swimmer: Swimmer = Depends(get_current_swimmer),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(payload.current_password, swimmer.hashed_password):
+        raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
+
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 8 caracteres")
+
+    swimmer.hashed_password = hash_password(payload.new_password)
+    swimmer.must_change_password = False
+    db.add(swimmer)
+    db.commit()
+    return {"ok": True}
+
+
+
+@router.get("/me")
+def swimmer_me(swimmer: Swimmer = Depends(get_current_swimmer)):
+    return {
+        "id": swimmer.id, "full_name": swimmer.full_name, "document_id": swimmer.document_id,
+        "must_change_password": swimmer.must_change_password, "payment_active": swimmer.payment_active,
+    }

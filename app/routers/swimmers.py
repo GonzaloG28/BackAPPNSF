@@ -22,6 +22,8 @@ from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdat
 from app.models.gym_record import GymRecord
 from app.schemas.export import RosterExportRequest
 from app.utils.rut_validator import validate_rut, normalize_rut
+from app.utils.rut_auth import rut_default_password
+from app.core.security import hash_password
 
 router = APIRouter(prefix="/swimmers", tags=["swimmers"], dependencies=[Depends(get_current_user)])
 
@@ -526,6 +528,39 @@ def delete_swimmer_photo(swimmer_id: int, db: Session = Depends(get_db)):
     if not swimmer:
         raise HTTPException(status_code=404, detail="Nadador no encontrado")
     swimmer.photo_base64 = None
+    db.add(swimmer)
+    db.commit()
+    return {"ok": True}
+
+
+
+
+#----------------------------------------------------------------------
+
+
+
+@router.post("/{swimmer_id}/reset-password")
+def reset_swimmer_password(swimmer_id: int, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+    if not swimmer.document_id:
+        raise HTTPException(status_code=400, detail="Este nadador no tiene RUT registrado")
+
+    default_password = rut_default_password(swimmer.document_id)
+    swimmer.hashed_password = hash_password(default_password)
+    swimmer.must_change_password = True
+    db.add(swimmer)
+    db.commit()
+    return {"ok": True, "default_password": default_password}
+
+
+@router.patch("/{swimmer_id}/payment-status")
+def set_payment_status(swimmer_id: int, payload: dict, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Nadador no encontrado")
+    swimmer.payment_active = payload["payment_active"]
     db.add(swimmer)
     db.commit()
     return {"ok": True}
