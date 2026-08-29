@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 horas
+    REPORTS_EMAIL_TO: str = "programingsystemgg@gmail.com"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
