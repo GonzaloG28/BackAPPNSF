@@ -7,7 +7,7 @@ STROKE_CODE_MAP = {
     "E": StrokeType.BACK,     # Espalda
     "P": StrokeType.BREAST,   # Pecho
     "M": StrokeType.FLY,      # Mariposa
-    "IM": StrokeType.MEDLEY,   # Combinado / IM
+    "C": StrokeType.MEDLEY,   # Combinado / IM
 }
 
 
