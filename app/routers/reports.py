@@ -1,12 +1,13 @@
 # app/routers/reports.py
+import logging
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from app.core.deps import get_current_user
-from app.config import settings  # asume que tienes settings con credenciales SMTP
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(get_current_user)])
 
@@ -16,24 +17,24 @@ class ReportCreate(BaseModel):
 
 
 @router.post("", status_code=201)
-def create_report(payload: ReportCreate, current_user=Depends(get_current_user)):
-    try:
-        _send_report_email(payload.message, current_user)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail="No se pudo enviar el reporte por correo")
+async def create_report(payload: ReportCreate, current_user=Depends(get_current_user)):
+    user_email = getattr(current_user, "email", "desconocido")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+                json={
+                    "from": settings.RESEND_FROM,
+                    "to": [settings.REPORTS_EMAIL_TO],
+                    "subject": f"[SwimAI] Nuevo reporte de {user_email}",
+                    "text": f"Usuario: {user_email}\n\nMensaje:\n{payload.message}",
+                },
+            )
+            resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo al enviar reporte por correo vía Resend")
+            raise HTTPException(status_code=502, detail="No se pudo enviar el reporte por correo")
+
     return {"ok": True}
-
-
-def _send_report_email(message: str, current_user):
-    msg = MIMEMultipart()
-    msg["From"] = settings.SMTP_FROM
-    msg["To"] = settings.REPORTS_EMAIL_TO
-    msg["Subject"] = f"[SwimAI] Nuevo reporte de {getattr(current_user, 'email', 'usuario')}"
-
-    body = f"Usuario: {getattr(current_user, 'email', 'desconocido')}\n\nMensaje:\n{message}"
-    msg.attach(MIMEText(body, "plain"))
-
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-        server.starttls()
-        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.send_message(msg)
