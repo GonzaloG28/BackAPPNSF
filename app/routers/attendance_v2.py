@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import Query
 from datetime import datetime as dt
@@ -15,31 +16,29 @@ router = APIRouter(prefix="/attendance-v2", tags=["attendance"], dependencies=[D
 
 
 @router.get("/today")
-def get_today_checklist(
-    date_param: str | None = Query(None, alias="date"),
-    db: Session = Depends(get_db),
-):
-    target_date = dt.strptime(date_param, "%Y-%m-%d").date() if date_param else date.today()
-    weekday = target_date.weekday()
+def get_today_checklist(shift: Optional[str] = None, profile: Optional[str] = None, db: Session = Depends(get_db)):
+    today = date.today()
+    weekday = today.weekday()
 
-    swimmers = db.query(Swimmer).filter(Swimmer.status == SwimmerStatus.ACTIVE).order_by(Swimmer.last_name_1).all()
-    existing = {l.swimmer_id: l.complied for l in db.query(AttendanceLog).filter(AttendanceLog.date == target_date).all()}
+    query = db.query(Swimmer).filter(Swimmer.status == SwimmerStatus.ACTIVE)
+    if profile:
+        query = query.filter(Swimmer.profile == profile)
+    if shift:
+        # AM_PM siempre aparece en ambos filtros
+        query = query.filter((Swimmer.schedule_shift == shift) | (Swimmer.schedule_shift == "AM_PM"))
 
-    schedules = {
-        s.swimmer_id: s.shift.value
-        for s in db.query(PersonalSchedule).filter(PersonalSchedule.weekday == weekday).all()
-    }
+    swimmers = query.order_by(Swimmer.last_name_1).all()
+    existing = {l.swimmer_id: l.complied for l in db.query(AttendanceLog).filter(AttendanceLog.date == today).all()}
+    schedules = {s.swimmer_id: s.shift.value for s in db.query(PersonalSchedule).filter(PersonalSchedule.weekday == weekday).all()}
 
     result = []
     for s in swimmers:
         expected_shift = schedules.get(s.id, "NONE")
         if expected_shift == "NONE":
-            continue  # solo lista a quienes tienen algo programado ese día
+            continue
         result.append({
-            "swimmer_id": s.id,
-            "name": s.full_name,
-            "expected_shift": expected_shift,
-            "complied": existing.get(s.id),
+            "swimmer_id": s.id, "name": s.full_name,
+            "expected_shift": expected_shift, "complied": existing.get(s.id),
         })
     return result
 

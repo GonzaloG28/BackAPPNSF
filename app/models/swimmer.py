@@ -22,6 +22,11 @@ class SwimmerProfile(str, enum.Enum):
     COMPETITIVE = "COMPETITIVE"
     FORMATIVE = "FORMATIVE"
 
+class SwimmerShift(str, enum.Enum):
+    AM = "AM"
+    PM = "PM"
+    AM_PM = "AM_PM"
+
 
 CATEGORY_RULES = [
     ("Infantil C",           lambda age: age <= 9),
@@ -72,6 +77,7 @@ class Swimmer(Base):
     metrics = relationship("SwimmerMetric", back_populates="swimmer", cascade="all, delete-orphan")
     time_records = relationship("TimeRecord", back_populates="swimmer", cascade="all, delete-orphan")
     attendances = relationship("Attendance", back_populates="swimmer", cascade="all, delete-orphan")
+    schedule_shift = Column(Enum(SwimmerShift), nullable=True)
     payments = relationship("Payment", back_populates="swimmer", cascade="all, delete-orphan")
 
     photo_base64 = Column(String, nullable=True)

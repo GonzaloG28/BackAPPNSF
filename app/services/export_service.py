@@ -24,6 +24,7 @@ def generate_convocatoria_excel(db, convocatoria):
     wb = Workbook()
     ws = wb.active
     ws.title = "Convocatoria"
+    
 
     fixed_headers = ["Nombres", "Apellidos", "RUT", "Género", "Fecha de Nacimiento", "Comuna", "Instituto", "Teléfono", "Correo Electrónico"]
     dynamic_headers = []
@@ -55,7 +56,7 @@ def generate_convocatoria_excel(db, convocatoria):
         for i in range(max_events):
             if i < len(swimmer_entries):
                 e = swimmer_entries[i]
-                time_display = _seconds_to_display(float(e.best_time_seconds)) if e.best_time_seconds is not None else "Sin marca"
+                time_display = _seconds_to_display(float(e.best_time_seconds)) if e.best_time_seconds is not None else "NT"
                 row += [e.event_type.name, time_display]
             else:
                 row += ["", ""]

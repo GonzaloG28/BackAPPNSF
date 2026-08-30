@@ -64,8 +64,24 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
                     q = q.filter(TimeRecord.pool_length == qt.pool_length)
                 qualifying_records = q.order_by(TimeRecord.time_seconds.asc()).all()
 
-                if not qualifying_records:
+                has_any_record = db.query(TimeRecord).filter(
+                TimeRecord.swimmer_id == swimmer.id, TimeRecord.event_type_id == qt.event_type_id
+                    ).first() is not None
+
+                if not qualifying_records or has_any_record:
+                    grp = event_groups.setdefault(qt.event_type_id, {"event_name": qt.event_type.name, "marks": [], "qualifying_time": float(qt.min_time_seconds) if qt.min_time_seconds else None})
+                    key = (swimmer.id, qt.event_type_id, None)  # sin time_record_id real
+                    existing_nt = existing_entries.get(key)
+                    selected = existing_nt.selected if existing_nt else False
+                    grp["marks"].append({
+                        "time_record_id": None,
+                        "time_seconds": None,
+                        "is_nt": True,  # ← flag clave para el frontend
+                        "date": None, "pool_length": None,
+                        "selected": selected,
+                    })
                     continue
+
 
                 grp = event_groups.setdefault(qt.event_type_id, {"event_name": qt.event_type.name, "marks": [], "qualifying_time": float(qt.min_time_seconds)})
                 for r in qualifying_records:
