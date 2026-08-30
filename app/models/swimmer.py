@@ -91,7 +91,11 @@ class Swimmer(Base):
         """Edad por AÑO CALENDARIO (no por fecha exacta de cumpleaños)."""
         if not self.birth_date:
             return None
-        return date.today().year - self.birth_date.year
+            
+        current_year = date.today().year
+        birth_year = self.birth_date.year
+        
+        return current_year - birth_year - 1
  
     def compute_category(self) -> str | None:
         """Subcategoría oficial (Infantil C, Infantil A, Infantil B1, Infantil B2,
