@@ -1,18 +1,24 @@
 # app/routers/attendance_v2.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime as dt
 from typing import Optional
- 
-from fastapi import Query
-from datetime import datetime as dt
  
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.personal_schedule import PersonalSchedule
-from app.models.attendance_log import AttendanceLog
+from app.models.attendance_log import AttendanceLog, AttendanceShift
  
 router = APIRouter(prefix="/attendance-v2", tags=["attendance"], dependencies=[Depends(get_current_user)])
+ 
+ 
+def _parse_shift(value: Optional[str]) -> AttendanceShift:
+    if not value:
+        return AttendanceShift.AM_PM
+    try:
+        return AttendanceShift(value)
+    except ValueError:
+        return AttendanceShift.AM_PM
  
  
 @router.get("/today")
@@ -22,20 +28,21 @@ def get_today_checklist(
     profile: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    # IMPORTANTE: ya NO se usa date.today() del servidor como fuente de
-    # verdad. El frontend calcula el dia efectivo (con el corte de 12PM
-    # y en hora LOCAL del dispositivo) y lo manda explicito en `date`.
-    # Esto elimina el bug donde a las 23:00 hora Chile el servidor ya
-    # consideraba "manana" por trabajar en UTC.
     target_date = dt.strptime(date_param, "%Y-%m-%d").date() if date_param else date.today()
     weekday = target_date.weekday()
+    target_shift = _parse_shift(shift)
  
     query = db.query(Swimmer).filter(Swimmer.status == SwimmerStatus.ACTIVE)
     if profile:
         query = query.filter(Swimmer.profile == profile)
  
     swimmers = query.order_by(Swimmer.last_name_1).all()
-    existing = {l.swimmer_id: l.complied for l in db.query(AttendanceLog).filter(AttendanceLog.date == target_date).all()}
+ 
+    logs_query = db.query(AttendanceLog).filter(AttendanceLog.date == target_date)
+    if target_shift != AttendanceShift.AM_PM:
+        logs_query = logs_query.filter(AttendanceLog.shift == target_shift)
+    existing = {l.swimmer_id: l.complied for l in logs_query.all()}
+ 
     schedules = {s.swimmer_id: s.shift.value for s in db.query(PersonalSchedule).filter(PersonalSchedule.weekday == weekday).all()}
  
     result = []
@@ -43,11 +50,8 @@ def get_today_checklist(
         expected_shift = schedules.get(s.id, "NONE")
         if expected_shift == "NONE":
             continue
-        # Filtro por sesion: AM_PM del cliente = sin filtro (ver todos).
-        # Un nadador con horario AM_PM siempre aparece si se pide AM o PM.
-        if shift and shift != "AM_PM":
-            if expected_shift != shift and expected_shift != "AM_PM":
-                continue
+        if shift and shift != "AM_PM" and expected_shift not in (shift, "AM_PM"):
+            continue
         result.append({
             "swimmer_id": s.id, "name": s.full_name,
             "expected_shift": expected_shift, "complied": existing.get(s.id),
@@ -58,10 +62,8 @@ def get_today_checklist(
 @router.post("")
 def register_daily_attendance(payload: dict, db: Session = Depends(get_db)):
     date_param = payload.get("date")
-    # Igual que en /today: la fecha SIEMPRE viene explicita desde el
-    # frontend. date.today() es solo un respaldo si por algun motivo
-    # faltara (no deberia pasar en el flujo normal).
     target_date = dt.strptime(date_param, "%Y-%m-%d").date() if date_param else date.today()
+    target_shift = _parse_shift(payload.get("shift"))
  
     records = payload.get("records", [])
     saved = 0
@@ -71,13 +73,18 @@ def register_daily_attendance(payload: dict, db: Session = Depends(get_db)):
         complied = bool(r["complied"])
  
         existing = db.query(AttendanceLog).filter(
-            AttendanceLog.swimmer_id == swimmer_id, AttendanceLog.date == target_date
+            AttendanceLog.swimmer_id == swimmer_id,
+            AttendanceLog.date == target_date,
+            AttendanceLog.shift == target_shift,
         ).first()
  
         if existing:
             existing.complied = complied
         else:
-            db.add(AttendanceLog(swimmer_id=swimmer_id, date=target_date, complied=complied))
+            db.add(AttendanceLog(
+                swimmer_id=swimmer_id, date=target_date,
+                complied=complied, shift=target_shift,
+            ))
         saved += 1
  
     db.commit()
@@ -97,10 +104,16 @@ def get_general_summary(days: int = 6, db: Session = Depends(get_db)):
  
  
 @router.get("/{swimmer_id}/history")
-def get_swimmer_attendance_history(swimmer_id: int, db: Session = Depends(get_db)):
-    logs = db.query(AttendanceLog).filter(
-        AttendanceLog.swimmer_id == swimmer_id
-    ).order_by(AttendanceLog.date.desc()).all()
+def get_swimmer_attendance_history(
+    swimmer_id: int,
+    shift: Optional[str] = None,  # NUEVO: filtrar historial por sesión — AM / PM / AM_PM (todas)
+    db: Session = Depends(get_db),
+):
+    query = db.query(AttendanceLog).filter(AttendanceLog.swimmer_id == swimmer_id)
+    if shift and shift != "AM_PM":
+        query = query.filter(AttendanceLog.shift == _parse_shift(shift))
+ 
+    logs = query.order_by(AttendanceLog.date.desc()).all()
  
     today = date.today()
     week_ago = today - timedelta(days=7)
@@ -113,7 +126,10 @@ def get_swimmer_attendance_history(swimmer_id: int, db: Session = Depends(get_db
         return round(sum(1 for l in items if l.complied) / len(items) * 100, 1) if items else 0
  
     return {
-        "logs": [{"date": l.date.isoformat(), "complied": l.complied} for l in logs],
+        "logs": [
+            {"date": l.date.isoformat(), "complied": l.complied, "shift": l.shift.value}
+            for l in logs
+        ],
         "weekly_rate": rate(week_logs),
         "weekly_complied": sum(1 for l in week_logs if l.complied),
         "weekly_total": len(week_logs),
@@ -123,12 +139,32 @@ def get_swimmer_attendance_history(swimmer_id: int, db: Session = Depends(get_db
     }
  
  
+@router.delete("/{swimmer_id}/log/{log_date}")
+def delete_swimmer_log(
+    swimmer_id: int,
+    log_date: str,
+    shift: Optional[str] = None,  # si no se especifica, borra TODOS los shifts de ese día
+    db: Session = Depends(get_db),
+):
+    parsed_date = dt.strptime(log_date, "%Y-%m-%d").date()
+    query = db.query(AttendanceLog).filter(
+        AttendanceLog.swimmer_id == swimmer_id, AttendanceLog.date == parsed_date
+    )
+    if shift:
+        query = query.filter(AttendanceLog.shift == _parse_shift(shift))
+    deleted = query.delete()
+    db.commit()
+    return {"deleted": deleted}
+ 
+ 
 @router.get("/history-summary/{log_date}/detail")
-def get_day_detail(log_date: str, db: Session = Depends(get_db)):
-    from datetime import datetime as dt
+def get_day_detail(log_date: str, shift: Optional[str] = None, db: Session = Depends(get_db)):
     parsed_date = dt.strptime(log_date, "%Y-%m-%d").date()
  
-    logs = db.query(AttendanceLog).filter(AttendanceLog.date == parsed_date).all()
+    query = db.query(AttendanceLog).filter(AttendanceLog.date == parsed_date)
+    if shift and shift != "AM_PM":
+        query = query.filter(AttendanceLog.shift == _parse_shift(shift))
+    logs = query.all()
  
     complied, not_complied = [], []
     for log in logs:
@@ -165,7 +201,6 @@ def update_schedule(swimmer_id: int, payload: dict, db: Session = Depends(get_db
  
 @router.get("/history-summary")
 def get_history_summary(days: int = 15, db: Session = Depends(get_db)):
-    """Devuelve un resumen por dia: cuantos cumplieron y cuantos no, ultimos N dias con registros."""
     today = date.today()
     since = today - timedelta(days=days)
  
