@@ -24,7 +24,7 @@ class SwimmerProfile(str, enum.Enum):
 
 
 CATEGORY_RULES = [
-    ("Infantil C",           lambda age: 7  <= age <= 9),
+    ("Infantil C",           lambda age: age <= 9),
     ("Infantil A",           lambda age: age == 10),
     ("Infantil B1",          lambda age: age == 11),
     ("Infantil B2",          lambda age: age == 12),
