@@ -21,6 +21,19 @@ def _parse_shift(value: Optional[str]) -> AttendanceShift:
         return AttendanceShift.AM_PM
  
  
+def _swimmer_ids_for(db: Session, profile: Optional[str], category: Optional[str]) -> Optional[set[int]]:
+    """Devuelve el set de swimmer_id que matchean profile/category, o None
+    si no hay ningún filtro (para no restringir la query innecesariamente)."""
+    if not profile and not category:
+        return None
+    q = db.query(Swimmer.id)
+    if profile:
+        q = q.filter(Swimmer.profile == profile)
+    if category:
+        q = q.filter(Swimmer.category == category)
+    return {row[0] for row in q.all()}
+ 
+ 
 @router.get("/today")
 def get_today_checklist(
     date_param: Optional[str] = Query(None, alias="date"),
@@ -106,7 +119,7 @@ def get_general_summary(days: int = 6, db: Session = Depends(get_db)):
 @router.get("/{swimmer_id}/history")
 def get_swimmer_attendance_history(
     swimmer_id: int,
-    shift: Optional[str] = None,  # NUEVO: filtrar historial por sesión — AM / PM / AM_PM (todas)
+    shift: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     query = db.query(AttendanceLog).filter(AttendanceLog.swimmer_id == swimmer_id)
@@ -143,7 +156,7 @@ def get_swimmer_attendance_history(
 def delete_swimmer_log(
     swimmer_id: int,
     log_date: str,
-    shift: Optional[str] = None,  # si no se especifica, borra TODOS los shifts de ese día
+    shift: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     parsed_date = dt.strptime(log_date, "%Y-%m-%d").date()
@@ -158,12 +171,25 @@ def delete_swimmer_log(
  
  
 @router.get("/history-summary/{log_date}/detail")
-def get_day_detail(log_date: str, shift: Optional[str] = None, db: Session = Depends(get_db)):
+def get_day_detail(
+    log_date: str,
+    shift: Optional[str] = None,
+    profile: Optional[str] = None,      # NUEVO: filtrar por Formativo/Competitivo
+    category: Optional[str] = None,     # NUEVO: filtrar por categoría oficial
+    db: Session = Depends(get_db),
+):
     parsed_date = dt.strptime(log_date, "%Y-%m-%d").date()
  
     query = db.query(AttendanceLog).filter(AttendanceLog.date == parsed_date)
     if shift and shift != "AM_PM":
         query = query.filter(AttendanceLog.shift == _parse_shift(shift))
+ 
+    swimmer_ids = _swimmer_ids_for(db, profile, category)
+    if swimmer_ids is not None:
+        if not swimmer_ids:
+            return {"date": log_date, "complied": [], "not_complied": []}
+        query = query.filter(AttendanceLog.swimmer_id.in_(swimmer_ids))
+ 
     logs = query.all()
  
     complied, not_complied = [], []
@@ -200,11 +226,30 @@ def update_schedule(swimmer_id: int, payload: dict, db: Session = Depends(get_db
  
  
 @router.get("/history-summary")
-def get_history_summary(days: int = 15, db: Session = Depends(get_db)):
+def get_history_summary(
+    days: int = 15,
+    shift: Optional[str] = None,
+    profile: Optional[str] = None,      # NUEVO
+    category: Optional[str] = None,     # NUEVO
+    db: Session = Depends(get_db),
+):
+    """Resumen por día: cuántos cumplieron y cuántos no, filtrado por
+    grupo/categoría/sesión — antes mezclaba a TODOS los nadadores del club
+    sin importar qué se estaba viendo en pantalla."""
     today = date.today()
     since = today - timedelta(days=days)
  
-    logs = db.query(AttendanceLog).filter(AttendanceLog.date >= since).all()
+    query = db.query(AttendanceLog).filter(AttendanceLog.date >= since)
+    if shift and shift != "AM_PM":
+        query = query.filter(AttendanceLog.shift == _parse_shift(shift))
+ 
+    swimmer_ids = _swimmer_ids_for(db, profile, category)
+    if swimmer_ids is not None:
+        if not swimmer_ids:
+            return []
+        query = query.filter(AttendanceLog.swimmer_id.in_(swimmer_ids))
+ 
+    logs = query.all()
  
     by_date: dict = {}
     for log in logs:
@@ -222,3 +267,4 @@ def get_history_summary(days: int = 15, db: Session = Depends(get_db)):
     ]
     result.sort(key=lambda x: x["date"], reverse=True)
     return result
+ 
