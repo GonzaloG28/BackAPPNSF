@@ -38,22 +38,11 @@ def get_convocatoria_matrix(convocatoria_id: int, db: Session = Depends(get_db))
     convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
     if not convocatoria:
         raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
- 
-    matrix_swimmers = build_convocatoria_matrix(db, convocatoria)
-    sync_convocatoria_entries(db, convocatoria, matrix_swimmers)
- 
-    # FIX: el frontend (matrix.tsx) espera dos listas separadas —
-    # with_marks y without_marks — y no una lista plana "swimmers".
-    # Antes esas claves no existían en la respuesta, por eso no aparecía
-    # ningún nadador (setWithMarks/setWithoutMarks siempre recibían []).
-    with_marks = [s for s in matrix_swimmers if s["has_marks"]]
-    without_marks = [s for s in matrix_swimmers if not s["has_marks"]]
- 
-    return {
-        "convocatoria_id": convocatoria_id,
-        "with_marks": with_marks,
-        "without_marks": without_marks,
-    }
+
+    matrix = build_convocatoria_matrix(db, convocatoria)
+    sync_convocatoria_entries(db, convocatoria, matrix)
+
+    return {"convocatoria_id": convocatoria_id, "swimmers": matrix}
  
  
 @router.get("/stats")
@@ -71,32 +60,27 @@ def update_entries(convocatoria_id: int, payload: ConvocatoriaEntriesUpdate, db:
     convocatoria = db.query(Convocatoria).filter(Convocatoria.id == convocatoria_id).first()
     if not convocatoria:
         raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
- 
+
     updated = 0
     for item in payload.entries:
         entry = db.query(ConvocatoriaEntry).filter(
             ConvocatoriaEntry.convocatoria_id == convocatoria_id,
             ConvocatoriaEntry.swimmer_id == item.swimmer_id,
             ConvocatoriaEntry.event_type_id == item.event_type_id,
+            ConvocatoriaEntry.time_record_id == item.time_record_id,
         ).first()
- 
+
         if not entry:
             entry = ConvocatoriaEntry(
-                convocatoria_id=convocatoria_id, swimmer_id=item.swimmer_id, event_type_id=item.event_type_id,
+                convocatoria_id=convocatoria_id, swimmer_id=item.swimmer_id,
+                event_type_id=item.event_type_id, time_record_id=item.time_record_id,
+                is_nt_inscription=item.time_record_id is None,
             )
- 
+
         entry.selected = item.selected
- 
-        if item.manual_time == "NT":
-            entry.best_time_seconds = None
-            entry.is_nt_inscription = True
-        elif isinstance(item.manual_time, (int, float)):
-            entry.best_time_seconds = item.manual_time
-            entry.is_nt_inscription = False
- 
         db.add(entry)
         updated += 1
- 
+
     db.commit()
     return {"updated": updated}
  
