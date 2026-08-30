@@ -21,3 +21,4 @@ class ConvocatoriaEntry(Base):
     swimmer = relationship("Swimmer")
     event_type = relationship("EventType")
     qualifying_time = relationship("QualifyingTime")
+    is_nt_inscription = Column(Boolean, default=False)

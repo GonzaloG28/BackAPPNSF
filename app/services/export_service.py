@@ -56,7 +56,7 @@ def generate_convocatoria_excel(db, convocatoria):
         for i in range(max_events):
             if i < len(swimmer_entries):
                 e = swimmer_entries[i]
-                time_display = _seconds_to_display(float(e.best_time_seconds)) if e.best_time_seconds is not None else "NT"
+                time_display = "NT" if e.is_nt_inscription or e.best_time_seconds is None else _seconds_to_display(float(e.best_time_seconds))
                 row += [e.event_type.name, time_display]
             else:
                 row += ["", ""]
