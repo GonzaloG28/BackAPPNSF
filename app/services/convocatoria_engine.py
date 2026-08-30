@@ -68,7 +68,7 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
                 TimeRecord.swimmer_id == swimmer.id, TimeRecord.event_type_id == qt.event_type_id
                     ).first() is not None
 
-                if not qualifying_records or has_any_record:
+                if not qualifying_records or not has_any_record:
                     grp = event_groups.setdefault(qt.event_type_id, {"event_name": qt.event_type.name, "marks": [], "qualifying_time": float(qt.min_time_seconds) if qt.min_time_seconds else None})
                     key = (swimmer.id, qt.event_type_id, None)  # sin time_record_id real
                     existing_nt = existing_entries.get(key)
