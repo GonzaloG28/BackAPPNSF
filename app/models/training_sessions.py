@@ -37,4 +37,4 @@ class TrainingSessions(Base):
 
     created_at = Column(DateTime, server_default=func.now())
 
-    target_group = relationship("CustomGroup")
+    target_group = relationship("CustomGroup", back_populates="training_sessions")

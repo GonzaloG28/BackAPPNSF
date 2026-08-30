@@ -38,7 +38,14 @@ def create_group(payload: CustomGroupCreate, db: Session = Depends(get_db)):
 
 @router.delete("/groups/{group_id}", status_code=204)
 def delete_group(group_id: int, db: Session = Depends(get_db)):
-    db.query(CustomGroup).filter(CustomGroup.id == group_id).delete()
+    # 1. Buscar el objeto primero
+    group_to_delete = db.query(CustomGroup).filter(CustomGroup.id == group_id).first()
+    
+    if not group_to_delete:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+        
+    # 2. Usar db.delete() sobre el objeto para activar el cascade="all, delete-orphan"
+    db.delete(group_to_delete)
     db.commit()
 
 
@@ -194,7 +201,7 @@ def save_day_notes(iso_date: str, payload: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-router.get("/day/{iso_date}/all-notes")
+@router.get("/day/{iso_date}/all-notes")
 def get_all_day_notes(iso_date: str, db: Session = Depends(get_db)):
     from datetime import datetime
     target_date = datetime.strptime(iso_date, "%Y-%m-%d").date()
