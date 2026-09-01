@@ -1,13 +1,18 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import ORJSONResponse
+
 
 from app.database import Base, engine
 import app.models
 
 from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self, reports
 
-app = FastAPI(title="SwimAI API", version="0.1.0")
+app = FastAPI(title="SwimAI API", version="0.1.0", default_response_class=ORJSONResponse)
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 Base.metadata.create_all(bind=engine)
 
