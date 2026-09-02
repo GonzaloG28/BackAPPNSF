@@ -1,5 +1,5 @@
 # app/models/swimmer.py — reemplaza first_name/last_name por 2+2, agrega cálculo de categoría
-from sqlalchemy import Column, Integer, String, Date, Enum, DateTime, func, Boolean
+from sqlalchemy import Column, Integer, String, Date, Enum, DateTime, func, Boolean, Text
 from sqlalchemy.orm import relationship
 from datetime import date
 import enum
@@ -80,7 +80,7 @@ class Swimmer(Base):
     schedule_shift = Column(Enum(SwimmerShift), nullable=True)
     payments = relationship("Payment", back_populates="swimmer", cascade="all, delete-orphan")
 
-    photo_base64 = Column(String, nullable=True)
+    photo_base64 = Column(Text, nullable=True)
 
     hashed_password = Column(String(255), nullable=True) 
     must_change_password = Column(Boolean, nullable=False, default=True)
