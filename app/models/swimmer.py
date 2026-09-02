@@ -120,4 +120,9 @@ class Swimmer(Base):
         if not self.category:
             return None
         return GENERAL_CATEGORY_MAP.get(self.category)
+
+    @property
+    def has_photo(self) -> bool:
+            return self.photo_base64 is not None
+    
  
