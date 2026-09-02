@@ -3,13 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, date
-from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from io import BytesIO
 from pydantic import BaseModel
-from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
+
+import base64
+
 
 from app.core.deps import get_db, get_current_user
 from app.models.swimmer import Swimmer, SwimmerStatus
@@ -18,7 +19,7 @@ from app.models.time_split import TimeSplit
 from app.schemas.time_record import TimeRecordCreate, TimeRecordUpdate
 from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
-from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut
+from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut, SwimmerListOut
 from app.models.gym_record import GymRecord
 from app.schemas.export import RosterExportRequest
 from app.utils.rut_validator import validate_rut, normalize_rut
@@ -89,34 +90,33 @@ def _serialize_time_record(r: TimeRecord) -> dict:
 # Nadadores — CRUD
 # ──────────────────────────────────────────────────────────────
 
-@router.get("", response_model=list[SwimmerOut])
+@router.get("", response_model=list[SwimmerListOut])
 def list_swimmers(
-    status: Optional[str] = Query(None),
-    category: Optional[str] = None,
-    profile: Optional[str] = None,
-    is_federated: Optional[bool] = None,
-    search: Optional[str] = None,
-    include_deleted: bool = Query(False),
-    db: Session = Depends(get_db),
+    status: Optional[str] = Query(None), category: Optional[str] = None,
+    profile: Optional[str] = None, is_federated: Optional[bool] = None,
+    search: Optional[str] = None, db: Session = Depends(get_db),
 ):
     query = db.query(Swimmer)
-    if status:
-        query = query.filter(Swimmer.status == status)
-    elif not include_deleted:
-        query = query.filter(Swimmer.status != SwimmerStatus.DELETED)
-    if category:
-        query = query.filter(Swimmer.category == category)
-    if profile:
-        query = query.filter(Swimmer.profile == profile)
-    if is_federated is not None:
-        query = query.filter(Swimmer.is_federated == is_federated)
+    if status: query = query.filter(Swimmer.status == status)
+    if category: query = query.filter(Swimmer.category == category)
+    if profile: query = query.filter(Swimmer.profile == profile)
+    if is_federated is not None: query = query.filter(Swimmer.is_federated == is_federated)
     if search:
         like = f"%{search}%"
         query = query.filter(
             (Swimmer.first_name_1.ilike(like)) | (Swimmer.last_name_1.ilike(like)) |
             (Swimmer.first_name_2.ilike(like)) | (Swimmer.last_name_2.ilike(like))
         )
-    return query.order_by(Swimmer.last_name_1).all()
+
+    swimmers = query.order_by(Swimmer.last_name_1).all()
+
+    return [
+        SwimmerListOut(
+            **{k: v for k, v in s.__dict__.items() if k != "_sa_instance_state"},
+            has_photo=s.photo_base64 is not None,
+        )
+        for s in swimmers
+    ]
 
 
 @router.get("/{swimmer_id}", response_model=SwimmerOut)
@@ -504,7 +504,20 @@ def delete_all_times_for_event(swimmer_id: int, event_type_id: int, db: Session 
     db.commit()
 
 
-    
+
+
+
+@router.get("/{swimmer_id}/photo")
+def get_swimmer_photo(swimmer_id: int, db: Session = Depends(get_db)):
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    if not swimmer or not swimmer.photo_base64:
+        raise HTTPException(status_code=404)
+    header, encoded = swimmer.photo_base64.split(",", 1)
+    return Response(
+        content=base64.b64decode(encoded),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 @router.put("/{swimmer_id}/photo")
 def upload_swimmer_photo(swimmer_id: int, payload: PhotoUpload, db: Session = Depends(get_db)):

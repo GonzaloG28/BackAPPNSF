@@ -62,11 +62,13 @@ class SwimmerStatusUpdate(BaseModel):
     reason: Optional[str] = None
 
 
-class SwimmerOut(SwimmerBase):  
+class SwimmerListOut(SwimmerBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     category: Optional[str] = None
     status: SwimmerStatusEnum
-    status_reason: Optional[str] = None
-    photo_base64: Optional[str] = None
     created_at: datetime
+    has_photo: bool
+
+class SwimmerOut(SwimmerListOut):
+    photo_base64: Optional[str] = None
