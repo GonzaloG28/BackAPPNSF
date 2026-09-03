@@ -512,14 +512,13 @@ def get_swimmer_photo(swimmer_id: int, db: Session = Depends(get_db)):
     swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
     if not swimmer or not swimmer.photo_base64:
         raise HTTPException(status_code=404)
-    
-    photo_data = swimmer.photo_base64
-    
-    # Maneja tanto imágenes con prefijo (antiguas) como sin prefijo (nuevas)
-    if "," in photo_data:
-        _, encoded = photo_data.split(",", 1)
+
+    raw = swimmer.photo_base64
+    # Defensivo: soporta tanto "data:image/jpeg;base64,XXXX" como solo "XXXX"
+    if "," in raw:
+        encoded = raw.split(",", 1)[1]
     else:
-        encoded = photo_data
+        encoded = raw
 
     return Response(
         content=base64.b64decode(encoded),
