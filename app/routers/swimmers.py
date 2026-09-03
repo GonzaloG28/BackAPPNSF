@@ -510,18 +510,28 @@ def delete_all_times_for_event(swimmer_id: int, event_type_id: int, db: Session 
 @router.get("/{swimmer_id}/photo")
 def get_swimmer_photo(swimmer_id: int, db: Session = Depends(get_db)):
     swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    
     if not swimmer or not swimmer.photo_base64:
         raise HTTPException(status_code=404)
+    
+    encoded = swimmer.photo_base64
+    
+    # Quitar prefijo si existe (por compatibilidad con fotos viejas)
+    if "," in encoded:
+        _, encoded = encoded.split(",", 1)
+        
+    # Limpiar espacios y aplicar fórmula para restaurar el padding (=) si falta
+    encoded = encoded.strip()
+    encoded += "=" * ((4 - len(encoded) % 4) % 4)
 
-    raw = swimmer.photo_base64
-    # Defensivo: soporta tanto "data:image/jpeg;base64,XXXX" como solo "XXXX"
-    if "," in raw:
-        encoded = raw.split(",", 1)[1]
-    else:
-        encoded = raw
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except Exception as e:
+        print(f"Error decodificando imagen {swimmer_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno al procesar la imagen")
 
     return Response(
-        content=base64.b64decode(encoded),
+        content=image_bytes,
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=86400"},
     )
