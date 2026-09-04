@@ -8,8 +8,9 @@ from io import BytesIO
 from pydantic import BaseModel
 from openpyxl.styles import Font, PatternFill
 from fastapi.responses import StreamingResponse, Response
+from PIL import Image
 
-import base64
+import base64, io
 
 
 from app.core.deps import get_db, get_current_user
@@ -542,11 +543,16 @@ def upload_swimmer_photo(swimmer_id: int, payload: PhotoUpload, db: Session = De
     if not swimmer:
         raise HTTPException(status_code=404, detail="Nadador no encontrado")
 
-    # Límite de tamaño razonable (~2MB en base64)
-    if len(payload.photo_base64) > 2_800_000:
-        raise HTTPException(status_code=400, detail="La imagen es demasiado grande (máx. ~2MB)")
+    header, encoded = payload.photo_base64.split(",", 1) if "," in payload.photo_base64 else ("", payload.photo_base64)
+    img_bytes = base64.b64decode(encoded)
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
-    swimmer.photo_base64 = payload.photo_base64
+    # 400px de lado máximo — de sobra para un avatar de perfil, reduce drásticamente el peso
+    img.thumbnail((400, 400))
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=60, optimize=True)
+
+    swimmer.photo_base64 = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
     db.add(swimmer)
     db.commit()
     return {"ok": True}
