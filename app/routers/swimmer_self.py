@@ -11,6 +11,9 @@ from app.models.attendance_log import AttendanceLog
 from app.models.gym_record import GymRecord
 from app.models.convocatoria import Convocatoria, ConvocatoriaStatus
 from app.models.convocatoria_entry import ConvocatoriaEntry
+from app.models.test_battery import TestBattery
+from app.models.test_battery_result import TestBatteryResult
+from app.models.club_record import ClubRecord
 
 router = APIRouter(prefix="/swimmer-self", tags=["swimmer-self"])
 
@@ -161,3 +164,71 @@ def get_gym_history_detail(exercise_id: int, swimmer: Swimmer = Depends(get_curr
         GymRecord.swimmer_id == swimmer.id, GymRecord.exercise_id == exercise_id
     ).order_by(GymRecord.recorded_at.asc()).all()
     return [{"date": r.recorded_at.isoformat(), "one_rm_kg": float(r.one_rm_kg)} for r in records]
+
+
+@router.get("/test-batteries")
+def get_my_test_batteries(swimmer: Swimmer = Depends(get_current_swimmer), db: Session = Depends(get_db)):
+    """Mejor marca + cantidad de registros por batería, mismo patrón que marks_summary del dashboard."""
+    if not swimmer.payment_active:
+        return []
+    best_per_battery = db.query(
+        TestBatteryResult.battery_id,
+        func.min(TestBatteryResult.value_seconds).label("best_time"),
+        func.count(TestBatteryResult.id).label("total_results"),
+    ).filter(TestBatteryResult.swimmer_id == swimmer.id).group_by(TestBatteryResult.battery_id).all()
+
+    if not best_per_battery:
+        return []
+
+    batteries = {
+        b.id: b for b in db.query(TestBattery).filter(
+            TestBattery.id.in_([r.battery_id for r in best_per_battery])
+        ).all()
+    }
+
+    return [
+        {
+            "battery_id": r.battery_id,
+            "battery_name": batteries[r.battery_id].name if r.battery_id in batteries else "—",
+            "best_time_seconds": float(r.best_time) if r.best_time is not None else None,
+            "total_results": r.total_results,
+        }
+        for r in best_per_battery
+    ]
+
+
+@router.get("/test-batteries/{battery_id}/history")
+def get_my_test_battery_history(battery_id: int, swimmer: Swimmer = Depends(get_current_swimmer), db: Session = Depends(get_db)):
+    if not swimmer.payment_active:
+        return []
+    results = db.query(TestBatteryResult).filter(
+        TestBatteryResult.battery_id == battery_id, TestBatteryResult.swimmer_id == swimmer.id
+    ).order_by(TestBatteryResult.recorded_date.asc()).all()
+    return [
+        {
+            "date": r.recorded_date.isoformat(),
+            "time_seconds": float(r.value_seconds) if r.value_seconds is not None else None,
+            "value_reps": r.value_reps,
+        }
+        for r in results
+    ]
+
+
+@router.get("/club-records")
+def get_my_club_records(swimmer: Swimmer = Depends(get_current_swimmer), db: Session = Depends(get_db)):
+    """Solo los récords del club que el propio nadador sostiene actualmente."""
+    if not swimmer.payment_active:
+        return []
+    records = db.query(ClubRecord).filter(ClubRecord.swimmer_id == swimmer.id).all()
+    return [
+        {
+            "event_type_id": r.event_type_id,
+            "event_name": r.event_type.name,
+            "category": r.category,
+            "gender": r.gender.value,
+            "pool_length": r.pool_length,
+            "time_seconds": float(r.time_seconds),
+            "achieved_date": r.achieved_date.isoformat(),
+        }
+        for r in records
+    ]

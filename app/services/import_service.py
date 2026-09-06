@@ -75,7 +75,8 @@ def process_roster_import(db: Session, rows: list[dict], import_log_id: int):
 
 def register_time_record(db: Session, swimmer_id: int, distance_m: int, stroke, seconds: float):
     from app.models.event_type import EventType, StrokeType
-    from app.models.time_record import TimeRecord, TimeSource
+    from app.models.time_record import TimeSource
+    from app.services import time_record_service
     from datetime import date
 
     event_type = db.query(EventType).filter(
@@ -92,13 +93,12 @@ def register_time_record(db: Session, swimmer_id: int, distance_m: int, stroke, 
         db.commit()
         db.refresh(event_type)
 
-    time_record = TimeRecord(
-        swimmer_id=swimmer_id, event_type_id=event_type.id, time_seconds=seconds,
+    # Pasa por el servicio centralizado: la importación masiva tampoco debe
+    # saltarse el chequeo de récord del club.
+    return time_record_service.create_time_record(
+        db, swimmer_id=swimmer_id, event_type_id=event_type.id, time_seconds=seconds,
         recorded_date=date.today(), source=TimeSource.IMPORT, is_official=False,
     )
-    db.add(time_record)
-    db.commit()
-    return time_record
 
 
 def upsert_swimmer_fill_missing(db, swimmer, row: dict) -> bool:

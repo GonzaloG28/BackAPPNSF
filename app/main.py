@@ -7,7 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.database import Base, engine
 import app.models
 
-from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self, reports
+from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self, reports, test_batteries, club_records
 
 app = FastAPI(title="SwimAI API", version="0.1.0")
 
@@ -46,6 +46,8 @@ app.include_router(calendar.router)
 app.include_router(swimmer_auth.router)
 app.include_router(swimmer_self.router)
 app.include_router(reports.router)
+app.include_router(test_batteries.router)
+app.include_router(club_records.router)
 
 @app.get("/")
 def root():

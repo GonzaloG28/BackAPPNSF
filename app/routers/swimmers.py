@@ -18,6 +18,8 @@ from app.models.swimmer import Swimmer, SwimmerStatus
 from app.models.time_record import TimeRecord, TimeSource
 from app.models.time_split import TimeSplit
 from app.schemas.time_record import TimeRecordCreate, TimeRecordUpdate
+from app.services import time_record_service
+from app.services.club_records_engine import resync_slots_for_change
 from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut, SwimmerListOut
@@ -446,18 +448,14 @@ def get_time_splits(swimmer_id: int, time_id: int, db: Session = Depends(get_db)
 def create_time_record(swimmer_id: int, payload: TimeRecordCreate, db: Session = Depends(get_db)):
     splits = _validate_and_build_splits(payload.splits, payload.time_seconds)
 
-    record = TimeRecord(
-        swimmer_id=swimmer_id, event_type_id=payload.event_type_id, time_seconds=payload.time_seconds,
-        recorded_date=payload.recorded_date, pool_length=payload.pool_length,
-        location_note=payload.location_note, source=TimeSource.TRAINING,
-        split_increment=payload.split_increment,
+    # Pasa siempre por el servicio centralizado: es el único punto de creación
+    # de TimeRecord, así ningún tiempo nuevo se salta el chequeo de récord del club.
+    record = time_record_service.create_time_record(
+        db, swimmer_id=swimmer_id, event_type_id=payload.event_type_id,
+        time_seconds=payload.time_seconds, recorded_date=payload.recorded_date,
+        pool_length=payload.pool_length, location_note=payload.location_note,
+        split_increment=payload.split_increment, splits=splits,
     )
-    if splits:
-        record.splits = splits
-
-    db.add(record)
-    db.commit()
-    db.refresh(record)
     return _serialize_time_record(record)
 
 
@@ -468,6 +466,9 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
     ).first()
     if not record:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    swimmer = record.swimmer
+    old_pool_length = record.pool_length
 
     data = payload.model_dump(exclude_unset=True, exclude={"splits"})
     for field, value in data.items():
@@ -482,6 +483,14 @@ def update_time_record(swimmer_id: int, time_id: int, payload: TimeRecordUpdate,
     db.add(record)
     db.commit()
     db.refresh(record)
+
+    # Recalcula desde cero el/los slot(s) de récord afectados (el registro editado
+    # pudo haber sido el que sostenía el récord general y/o el de su categoría,
+    # o pudo cambiar de piscina).
+    if old_pool_length is not None and old_pool_length != record.pool_length:
+        resync_slots_for_change(db, record.event_type_id, swimmer, old_pool_length)
+    resync_slots_for_change(db, record.event_type_id, swimmer, record.pool_length)
+
     return _serialize_time_record(record)
 
 
@@ -492,17 +501,32 @@ def delete_time_record(swimmer_id: int, time_id: int, db: Session = Depends(get_
     ).first()
     if not record:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    swimmer = record.swimmer
+    event_type_id, pool_length = record.event_type_id, record.pool_length
+
     db.delete(record)
     db.commit()
+
+    resync_slots_for_change(db, event_type_id, swimmer, pool_length)
 
 
 @router.delete("/{swimmer_id}/times/event/{event_type_id}", status_code=204)
 def delete_all_times_for_event(swimmer_id: int, event_type_id: int, db: Session = Depends(get_db)):
-    db.query(TimeRecord).filter(
+    swimmer = db.query(Swimmer).filter(Swimmer.id == swimmer_id).first()
+    records = db.query(TimeRecord).filter(
         TimeRecord.swimmer_id == swimmer_id,
         TimeRecord.event_type_id == event_type_id,
-    ).delete()
+    ).all()
+    affected_pool_lengths = {r.pool_length for r in records if r.pool_length is not None}
+
+    for r in records:
+        db.delete(r)
     db.commit()
+
+    if swimmer:
+        for pool_length in affected_pool_lengths:
+            resync_slots_for_change(db, event_type_id, swimmer, pool_length)
 
 
 

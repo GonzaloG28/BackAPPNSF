@@ -26,6 +26,11 @@ excel_prueba_roster.xlsx
 *.xlsx
 !seed_data/**/*.xlsx
 
+# ── Snapshots de base de datos (pueden contener datos reales, y quedan
+#    desactualizados frente a los scripts de migración) ──────────────
+backup_completo.sql
+estructura_completa.sql
+
 # ── Editor / SO ──────────────────────────────────────────────────────
 .vscode/
 .idea/
