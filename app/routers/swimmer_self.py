@@ -17,6 +17,55 @@ from app.models.club_record import ClubRecord
 
 router = APIRouter(prefix="/swimmer-self", tags=["swimmer-self"])
 
+MONTH_NAMES_ES = [
+    "", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _compute_improvement(records: list) -> dict | None:
+    """
+    Compara, por cada prueba con al menos 2 marcas, el primer tiempo registrado
+    contra el más reciente, y promedia el % de mejora entre todas esas pruebas.
+    `records` ya viene ordenado por (event_type_id, recorded_date asc).
+    """
+    by_event: dict = {}
+    for event_type_id, time_seconds, recorded_date in records:
+        by_event.setdefault(event_type_id, []).append((recorded_date, float(time_seconds)))
+
+    deltas = []
+    earliest_overall = None
+    latest_overall = None
+    for rows in by_event.values():
+        if len(rows) < 2:
+            continue
+        first_date, first_time = rows[0]
+        last_date, last_time = rows[-1]
+        deltas.append((first_time - last_time) / first_time * 100)  # positivo = más rápido = mejora
+        if earliest_overall is None or first_date < earliest_overall:
+            earliest_overall = first_date
+        if latest_overall is None or last_date > latest_overall:
+            latest_overall = last_date
+
+    if not deltas or earliest_overall is None:
+        return None
+
+    avg_pct = sum(deltas) / len(deltas)
+
+    if earliest_overall.year == latest_overall.year and earliest_overall.month == latest_overall.month:
+        period_label = MONTH_NAMES_ES[earliest_overall.month]
+    elif earliest_overall.year == latest_overall.year:
+        period_label = str(earliest_overall.year)
+    else:
+        years_span = latest_overall.year - earliest_overall.year
+        period_label = "el último año" if years_span <= 1 else f"los últimos {years_span} años"
+
+    return {
+        "pct": round(avg_pct, 1),
+        "period_label": period_label,
+        "events_considered": len(deltas),
+    }
+
 
 @router.get("/dashboard")
 def get_dashboard(swimmer: Swimmer = Depends(get_current_swimmer), db: Session = Depends(get_db)):
@@ -37,6 +86,7 @@ def get_dashboard(swimmer: Swimmer = Depends(get_current_swimmer), db: Session =
 
     # ── 1. Asistencia: agregado en SQL, no traemos filas individuales ──
     today = date.today()
+    since_7 = today - timedelta(days=7)
     since_30 = today - timedelta(days=30)
     since_90 = today - timedelta(days=90)
 
@@ -44,6 +94,13 @@ def get_dashboard(swimmer: Swimmer = Depends(get_current_swimmer), db: Session =
         func.count(AttendanceLog.id).label("total"),
         func.sum(func.cast(AttendanceLog.complied, db.bind.dialect.name == "postgresql" and __import__("sqlalchemy").Integer or __import__("sqlalchemy").Integer)).label("complied"),
     ).filter(AttendanceLog.swimmer_id == swimmer.id, AttendanceLog.date >= since_30).first()
+
+    # Últimos 7 días — para el widget de impacto rápido ("cumpliste 4/6 días"),
+    # que necesita un conteo puntual y no el promedio de 30 días.
+    attendance_7 = db.query(
+        func.count(AttendanceLog.id).label("total"),
+        func.sum(func.cast(AttendanceLog.complied, __import__("sqlalchemy").Integer)).label("complied"),
+    ).filter(AttendanceLog.swimmer_id == swimmer.id, AttendanceLog.date >= since_7).first()
 
     # Tendencia semanal (últimas 8 semanas) — 8 números, no 8 semanas de filas crudas
     weekly_trend = []
@@ -123,23 +180,58 @@ def get_dashboard(swimmer: Swimmer = Depends(get_current_swimmer), db: Session =
 
     upcoming_convocatorias = sorted(convocatorias_by_id.values(), key=lambda c: c["start_date"])
 
+    # ── 5. Récord del Club (noticia): último récord OPEN (sin distinción de
+    # categoría) roto en TODO el club, no solo los del propio nadador — fomenta
+    # la cultura de equipo. Lectura directa, sin agregación (ya está materializado
+    # por app/services/club_records_engine.py cada vez que se sube un tiempo).
+    latest_club_record_row = db.query(ClubRecord).filter(
+        ClubRecord.category == "OPEN"
+    ).order_by(desc(ClubRecord.achieved_date), desc(ClubRecord.updated_at)).first()
+
+    # ── 6. Mejora de pruebas: primer vs. último tiempo por prueba, promediado ──
+    event_history = db.query(
+        TimeRecord.event_type_id, TimeRecord.time_seconds, TimeRecord.recorded_date
+    ).filter(TimeRecord.swimmer_id == swimmer.id).order_by(
+        TimeRecord.event_type_id, TimeRecord.recorded_date.asc()
+    ).all()
+    improvement = _compute_improvement(event_history)
+
+    latest_club_record = None
+    if latest_club_record_row:
+        latest_club_record = {
+            "event_name": latest_club_record_row.event_type.name,
+            "gender": latest_club_record_row.gender.value,
+            "pool_length": latest_club_record_row.pool_length,
+            "time_seconds": float(latest_club_record_row.time_seconds),
+            "swimmer_name": latest_club_record_row.swimmer.full_name,
+            "achieved_date": latest_club_record_row.achieved_date.isoformat(),
+            "is_mine": latest_club_record_row.swimmer_id == swimmer.id,
+        }
+
     return {
         **base,
         "attendance": {
             "rate_30d": round(attendance_complied / attendance_total * 100, 0) if attendance_total else 0,
             "total_sessions_30d": attendance_total,
             "weekly_trend": weekly_trend,  # 8 enteros, ideal para sparkline
+            "last_7d": {
+                "complied": attendance_7.complied or 0,
+                "total": attendance_7.total or 0,
+            },
         },
         "marks_summary": marks_summary,       # resumen liviano; detalle completo vía /swimmer-self/marks/{event_type_id}
         "gym_summary": gym_summary,
         "upcoming_convocatorias": upcoming_convocatorias,
+        "latest_club_record": latest_club_record,
+        "improvement": improvement,
     }
 
 
 def _empty_dashboard_payload():
     return {
-        "attendance": {"rate_30d": 0, "total_sessions_30d": 0, "weekly_trend": [0] * 8},
-        "marks_summary": [], "gym_summary": [], "upcoming_convocatorias": [],
+        "attendance": {"rate_30d": 0, "total_sessions_30d": 0, "weekly_trend": [0] * 8, "last_7d": {"complied": 0, "total": 0}},
+        "marks_summary": [], "gym_summary": [], "upcoming_convocatorias": [], "latest_club_record": None,
+        "improvement": None,
     }
 
 
