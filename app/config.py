@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # ── Resend (envío de reportes por correo, vía HTTP) ───────
     RESEND_API_KEY: str
     RESEND_FROM: str  # cambia esto si verificas tu propio dominio
+    SWIMAI_GOD_MODE: bool
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
