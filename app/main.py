@@ -17,8 +17,9 @@ Base.metadata.create_all(bind=engine)
 # 1. Defines explícitamente quién puede conectarse a tu API
 origenes_permitidos = [
     "http://localhost:8081",
-    "http://localhost:8082",             # Para que puedas seguir probando en tu PC
-    "https://swimmobilensf.vercel.app"   # El enlace oficial para tus profesores
+    "http://localhost:8082",
+    "https://swimmerprofile.vercel.app",           
+    "https://swimmobilensf.vercel.app",   # El enlace oficial para tus profesores
 ]
 
 # 2. Configuras el middleware con esa lista
