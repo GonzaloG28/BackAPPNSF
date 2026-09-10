@@ -33,8 +33,9 @@ class SwimmerBase(BaseModel):
     institution: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-    profile: Optional[SwimmerProfileEnum] = None          
-    is_federated: Optional[bool] = None                    
+    profile: Optional[SwimmerProfileEnum] = None
+    is_federated: Optional[bool] = None
+    exclude_from_roster: Optional[bool] = False
 
 
 class SwimmerCreate(SwimmerBase):
@@ -53,8 +54,9 @@ class SwimmerUpdate(BaseModel):
     institution: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-    profile: Optional[SwimmerProfileEnum] = None            
-    is_federated: Optional[bool] = None                     
+    profile: Optional[SwimmerProfileEnum] = None
+    is_federated: Optional[bool] = None
+    exclude_from_roster: Optional[bool] = None
 
 
 class SwimmerStatusUpdate(BaseModel):

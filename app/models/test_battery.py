@@ -1,5 +1,5 @@
 # app/models/test_battery.py
-from sqlalchemy import Column, Integer, String, Boolean, Enum, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, Enum, ForeignKey, DateTime, func
 from sqlalchemy.orm import relationship
 import enum
 
@@ -24,6 +24,15 @@ class TestBattery(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
+    # reps_count>1 (ej. 10 en "10x100m") genera N inputs numerados al cargar
+    # un registro nuevo, en vez de un solo tiempo por sesión.
+    reps_count = Column(Integer, nullable=True)
+    # Modo "Control / Toma de Marca": compara cada repetición contra la
+    # Mejor Marca Personal del nadador en event_type_id.
+    is_control = Column(Boolean, default=False, nullable=False)
+    event_type_id = Column(Integer, ForeignKey("event_types.id"), nullable=True)
+
+    event_type = relationship("EventType")
     results = relationship(
         "TestBatteryResult", back_populates="battery",
         cascade="all, delete-orphan",

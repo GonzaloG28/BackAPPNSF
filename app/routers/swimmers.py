@@ -24,6 +24,10 @@ from app.models.swimmer_metric import SwimmerMetric
 from app.models.convocatoria_entry import ConvocatoriaEntry
 from app.schemas.swimmer import SwimmerCreate, SwimmerUpdate, SwimmerStatusUpdate, SwimmerOut, SwimmerListOut
 from app.models.gym_record import GymRecord
+from app.models.attendance_log import AttendanceLog
+from app.models.club_record import ClubRecord
+from app.models.personal_schedule import PersonalSchedule
+from app.models.test_battery_result import TestBatteryResult
 from app.schemas.export import RosterExportRequest
 from app.utils.rut_validator import validate_rut, normalize_rut
 from app.utils.rut_auth import rut_default_password
@@ -97,9 +101,14 @@ def _serialize_time_record(r: TimeRecord) -> dict:
 def list_swimmers(
     status: Optional[str] = Query(None), category: Optional[str] = None,
     profile: Optional[str] = None, is_federated: Optional[bool] = None,
-    search: Optional[str] = None, db: Session = Depends(get_db),
+    search: Optional[str] = None, include_ghost: bool = False, db: Session = Depends(get_db),
 ):
+    # exclude_from_roster: usuario de pruebas ("fantasma") — no debe sumar a
+    # los conteos de plantel del entrenador. Se puede pedir explícitamente
+    # con include_ghost=true (ej. una pantalla de QA que sí lo necesite ver).
     query = db.query(Swimmer)
+    if not include_ghost:
+        query = query.filter(Swimmer.exclude_from_roster == False)
     if status: query = query.filter(Swimmer.status == status)
     if category: query = query.filter(Swimmer.category == category)
     if profile: query = query.filter(Swimmer.profile == profile)
@@ -219,10 +228,16 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
 
     try:
         # Limpia registros relacionados que NO tienen cascade definido en el modelo.
-        # (metrics, time_records y attendances sí tienen cascade="all, delete-orphan"
-        # en la relationship de Swimmer, así que esos se borran solos al hacer db.delete)
+        # (metrics, time_records, attendances y payments sí tienen cascade="all,
+        # delete-orphan" en la relationship de Swimmer, así que esos se borran
+        # solos al hacer db.delete) — el resto de tablas con FK a swimmers.id
+        # se limpian a mano acá para que "eliminar" sea realmente definitivo.
         db.query(GymRecord).filter(GymRecord.swimmer_id == swimmer_id).delete()
         db.query(ConvocatoriaEntry).filter(ConvocatoriaEntry.swimmer_id == swimmer_id).delete()
+        db.query(AttendanceLog).filter(AttendanceLog.swimmer_id == swimmer_id).delete()
+        db.query(ClubRecord).filter(ClubRecord.swimmer_id == swimmer_id).delete()
+        db.query(PersonalSchedule).filter(PersonalSchedule.swimmer_id == swimmer_id).delete()
+        db.query(TestBatteryResult).filter(TestBatteryResult.swimmer_id == swimmer_id).delete()
 
         db.delete(swimmer)
         db.commit()
@@ -238,6 +253,7 @@ def hard_delete_swimmer(swimmer_id: int, db: Session = Depends(get_db)):
 def export_custom_roster(payload: RosterExportRequest, db: Session = Depends(get_db)):
 
     query = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED if not payload.status else Swimmer.status == payload.status)
+    query = query.filter(Swimmer.exclude_from_roster == False)
     if payload.category:
         query = query.filter(Swimmer.category == payload.category)
     if payload.profile:
@@ -343,7 +359,11 @@ def get_gym_records(swimmer_id: int, db: Session = Depends(get_db)):
             latest_by_exercise[r.exercise_id] = r
 
     return [
-        {"exercise_id": r.exercise_id, "exercise_name": r.exercise.name, "one_rm_kg": float(r.one_rm_kg)}
+        {
+            "exercise_id": r.exercise_id, "exercise_name": r.exercise.name, "one_rm_kg": float(r.one_rm_kg),
+            "weight_kg": float(r.weight_kg) if r.weight_kg is not None else None,
+            "reps": r.reps,
+        }
         for r in latest_by_exercise.values()
     ]
 
@@ -355,15 +375,26 @@ def get_gym_history(swimmer_id: int, exercise_id: int, db: Session = Depends(get
     ).order_by(GymRecord.recorded_at.desc()).all()
 
     return [
-        {"id": r.id, "one_rm_kg": float(r.one_rm_kg), "recorded_at": r.recorded_at.isoformat()}
+        {
+            "id": r.id, "one_rm_kg": float(r.one_rm_kg),
+            "weight_kg": float(r.weight_kg) if r.weight_kg is not None else None,
+            "reps": r.reps, "recorded_at": r.recorded_at.isoformat(),
+        }
         for r in records
     ]
 
 
 @router.post("/{swimmer_id}/gym/{exercise_id}")
-def add_gym_record(swimmer_id: int, exercise_id: int, one_rm_kg: float, db: Session = Depends(get_db)):
+def add_gym_record(
+    swimmer_id: int, exercise_id: int, one_rm_kg: float,
+    weight_kg: float | None = None, reps: int | None = None,
+    db: Session = Depends(get_db),
+):
     """Agrega un registro NUEVO al historial (no sobreescribe)."""
-    record = GymRecord(swimmer_id=swimmer_id, exercise_id=exercise_id, one_rm_kg=one_rm_kg)
+    record = GymRecord(
+        swimmer_id=swimmer_id, exercise_id=exercise_id, one_rm_kg=one_rm_kg,
+        weight_kg=weight_kg, reps=reps,
+    )
     db.add(record)
     db.commit()
     db.refresh(record)

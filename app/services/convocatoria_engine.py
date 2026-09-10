@@ -23,7 +23,22 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
         qt_map[(qt.event_type_id, qt.gender, qt.category)] = qt
 
     all_swimmers = db.query(Swimmer).filter(Swimmer.status != SwimmerStatus.DELETED).order_by(Swimmer.last_name_1).all()
+    swimmer_ids = [s.id for s in all_swimmers]
+    event_ids = [et.id for et in standard_events]
     cutoff_date = date.today() - timedelta(days=VIGENCIA_DAYS)
+
+    # Una sola consulta para TODOS los TimeRecord relevantes, en vez de una
+    # consulta por cada combinación nadador x prueba — con 85 nadadores x
+    # ~20 pruebas eran ~1700 round-trips a la base en cada carga de la
+    # convocatoria, el cuello de botella real de la demora reportada.
+    all_time_records = db.query(TimeRecord).filter(
+        TimeRecord.swimmer_id.in_(swimmer_ids),
+        TimeRecord.event_type_id.in_(event_ids),
+        TimeRecord.recorded_date >= cutoff_date,
+    ).order_by(TimeRecord.time_seconds.asc()).all()
+    records_by_swimmer_event: dict[tuple[int, int], list[TimeRecord]] = {}
+    for r in all_time_records:
+        records_by_swimmer_event.setdefault((r.swimmer_id, r.event_type_id), []).append(r)
 
     existing_entries = {
         (e.swimmer_id, e.event_type_id, e.time_record_id): e
@@ -50,11 +65,7 @@ def build_convocatoria_matrix(db: Session, convocatoria: Convocatoria) -> list[d
             )
             min_time = float(qt.min_time_seconds) if qt and qt.min_time_seconds else None
 
-            all_records = db.query(TimeRecord).filter(
-                TimeRecord.swimmer_id == swimmer.id,
-                TimeRecord.event_type_id == et.id,
-                TimeRecord.recorded_date >= cutoff_date,
-            ).order_by(TimeRecord.time_seconds.asc()).all()
+            all_records = records_by_swimmer_event.get((swimmer.id, et.id), [])
 
             if min_time is not None:
                 # Hay marca mínima: solo se muestran los tiempos que la cumplen
@@ -105,16 +116,24 @@ def sync_convocatoria_entries(db: Session, convocatoria: Convocatoria, matrix: l
         for e in db.query(ConvocatoriaEntry).filter(ConvocatoriaEntry.convocatoria_id == convocatoria.id).all()
     }
 
+    # Junta todas las filas nuevas y las inserta en un solo round-trip (en
+    # vez de un INSERT individual por fila — con 85 nadadores x ~20 pruebas
+    # eran hasta ~1700 inserts uno por uno la primera vez que se abría la
+    # convocatoria).
+    new_rows = []
     for row in matrix:
         for ev in row["events"]:
             for mark in ev["marks"]:
                 key = (row["swimmer_id"], ev["event_type_id"], mark["time_record_id"])
                 if key in existing:
                     continue  # ya existe, no se toca (la selección la maneja PATCH /entries)
-                db.add(ConvocatoriaEntry(
-                    convocatoria_id=convocatoria.id, swimmer_id=row["swimmer_id"],
-                    event_type_id=ev["event_type_id"], time_record_id=mark["time_record_id"],
-                    best_time_seconds=mark["time_seconds"], selected=mark["selected"],
-                    is_nt_inscription=mark["is_nt"],
-                ))
+                new_rows.append({
+                    "convocatoria_id": convocatoria.id, "swimmer_id": row["swimmer_id"],
+                    "event_type_id": ev["event_type_id"], "time_record_id": mark["time_record_id"],
+                    "best_time_seconds": mark["time_seconds"], "selected": mark["selected"],
+                    "is_nt_inscription": mark["is_nt"],
+                })
+
+    if new_rows:
+        db.bulk_insert_mappings(ConvocatoriaEntry, new_rows)
     db.commit()

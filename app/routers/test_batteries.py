@@ -1,5 +1,6 @@
 # app/routers/test_batteries.py
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import date
@@ -8,8 +9,10 @@ from app.core.deps import get_db, get_current_user
 from app.models.test_battery import TestBattery, TestResultType
 from app.models.test_battery_result import TestBatteryResult
 from app.models.test_battery_split import TestBatterySplit
+from app.models.test_battery_rep import TestBatteryRep, TestBatteryRepSplit
+from app.models.time_record import TimeRecord
 from app.schemas.test_battery import (
-    TestBatteryCreate, TestBatteryUpdate, BulkResultsIn, TestBatteryResultUpdate,
+    TestBatteryCreate, TestBatteryUpdate, BulkResultsIn, TestBatteryResultUpdate, RepsResultIn,
 )
 
 router = APIRouter(prefix="/test-batteries", tags=["test-batteries"], dependencies=[Depends(get_current_user)])
@@ -22,10 +25,39 @@ def _serialize_battery(b: TestBattery) -> dict:
         "id": b.id, "name": b.name, "description": b.description,
         "structure_label": b.structure_label, "result_type": b.result_type.value,
         "distance_m": b.distance_m, "allows_splits": b.allows_splits, "is_active": b.is_active,
+        "reps_count": b.reps_count, "is_control": b.is_control,
+        "event_type_id": b.event_type_id,
+        "event_type_name": b.event_type.name if b.event_type else None,
     }
 
 
-def _serialize_result(r: TestBatteryResult) -> dict:
+def _get_pb_seconds(db: Session, swimmer_id: int, event_type_id: Optional[int]) -> Optional[float]:
+    if not event_type_id:
+        return None
+    best = db.query(func.min(TimeRecord.time_seconds)).filter(
+        TimeRecord.swimmer_id == swimmer_id, TimeRecord.event_type_id == event_type_id,
+    ).scalar()
+    return float(best) if best is not None else None
+
+
+def _serialize_rep(rep: TestBatteryRep, pb_seconds: Optional[float]) -> dict:
+    time_s = float(rep.time_seconds)
+    return {
+        "id": rep.id, "rep_number": rep.rep_number, "time_seconds": time_s, "notes": rep.notes,
+        # gap > 0 = más lento que el PB; gap < 0 = mejoró el PB.
+        "gap_vs_pb": round(time_s - pb_seconds, 2) if pb_seconds is not None else None,
+        "splits": [
+            {
+                "distance_mark": s.distance_mark,
+                "segment_seconds": float(s.segment_seconds),
+                "cumulative_seconds": float(s.cumulative_seconds),
+            }
+            for s in sorted(rep.splits, key=lambda x: x.distance_mark)
+        ],
+    }
+
+
+def _serialize_result(r: TestBatteryResult, pb_seconds: Optional[float] = None) -> dict:
     return {
         "id": r.id, "battery_id": r.battery_id, "swimmer_id": r.swimmer_id,
         "swimmer_name": r.swimmer.full_name if r.swimmer else None,
@@ -40,6 +72,8 @@ def _serialize_result(r: TestBatteryResult) -> dict:
             }
             for s in sorted(r.splits, key=lambda x: x.distance_mark)
         ],
+        "pb_seconds": pb_seconds,
+        "reps": [_serialize_rep(rep, pb_seconds) for rep in sorted(r.reps, key=lambda x: x.rep_number)],
     }
 
 
@@ -59,6 +93,26 @@ def _build_splits(splits_in, total_seconds: Optional[float]):
         raise HTTPException(
             status_code=400,
             detail=f"La suma de los parciales ({cumulative:.2f}s) no coincide con el valor total ({total_seconds:.2f}s).",
+        )
+    return built
+
+
+def _build_rep_splits(splits_in, total_seconds: float):
+    if not splits_in:
+        return None
+    cumulative = 0.0
+    built = []
+    for s in splits_in:
+        cumulative += s.segment_seconds
+        built.append(TestBatteryRepSplit(
+            distance_mark=s.distance_mark,
+            segment_seconds=s.segment_seconds,
+            cumulative_seconds=round(cumulative, 2),
+        ))
+    if abs(cumulative - total_seconds) > SPLIT_TOLERANCE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La suma de los parciales ({cumulative:.2f}s) no coincide con el tiempo de la repetición ({total_seconds:.2f}s).",
         )
     return built
 
@@ -159,13 +213,61 @@ def list_results(
     swimmer_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
+    battery = db.query(TestBattery).filter(TestBattery.id == battery_id).first()
+    if not battery:
+        raise HTTPException(status_code=404, detail="Batería no encontrada")
+
     query = db.query(TestBatteryResult).filter(TestBatteryResult.battery_id == battery_id)
     if recorded_date:
         query = query.filter(TestBatteryResult.recorded_date == recorded_date)
     if swimmer_id:
         query = query.filter(TestBatteryResult.swimmer_id == swimmer_id)
     results = query.order_by(TestBatteryResult.recorded_date.desc()).all()
-    return [_serialize_result(r) for r in results]
+
+    # PB por nadador, calculado una vez por nadador distinto en la lista
+    # (no una query por resultado) — solo tiene sentido en modo Control.
+    pb_cache: dict[int, Optional[float]] = {}
+    def pb_for(sid: int) -> Optional[float]:
+        if not battery.is_control:
+            return None
+        if sid not in pb_cache:
+            pb_cache[sid] = _get_pb_seconds(db, sid, battery.event_type_id)
+        return pb_cache[sid]
+
+    return [_serialize_result(r, pb_for(r.swimmer_id)) for r in results]
+
+
+@router.post("/{battery_id}/results-with-reps", status_code=201)
+def create_result_with_reps(battery_id: int, payload: RepsResultIn, db: Session = Depends(get_db)):
+    """Carga una sesión completa con N repeticiones numeradas (ej. 10x100m =
+    10 tiempos). Si la batería es "Control / Toma de Marca", la respuesta
+    incluye el GAP de cada repetición contra la Mejor Marca Personal del
+    nadador en battery.event_type_id."""
+    battery = db.query(TestBattery).filter(TestBattery.id == battery_id).first()
+    if not battery:
+        raise HTTPException(status_code=404, detail="Batería no encontrada")
+    if not payload.reps:
+        raise HTTPException(status_code=400, detail="Debes ingresar al menos una repetición")
+
+    result = TestBatteryResult(
+        battery_id=battery_id, swimmer_id=payload.swimmer_id,
+        recorded_date=payload.recorded_date, notes=payload.notes,
+    )
+    reps = []
+    for rep_in in payload.reps:
+        rep = TestBatteryRep(rep_number=rep_in.rep_number, time_seconds=rep_in.time_seconds, notes=rep_in.notes)
+        rep_splits = _build_rep_splits(rep_in.splits, rep_in.time_seconds)
+        if rep_splits:
+            rep.splits = rep_splits
+        reps.append(rep)
+    result.reps = reps
+
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+
+    pb_seconds = _get_pb_seconds(db, payload.swimmer_id, battery.event_type_id) if battery.is_control else None
+    return _serialize_result(result, pb_seconds)
 
 
 @router.patch("/{battery_id}/results/{result_id}")

@@ -7,7 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.database import Base, engine
 import app.models
 
-from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self, reports, test_batteries, club_records
+from app.routers import imports, swimmers, attendance, attendance_v2, competitions, convocatorias, exports, auth, gym, performance, calendar, swimmer_auth, swimmer_self, reports, test_batteries, club_records, app_update_notes
 
 app = FastAPI(title="SwimAI API", version="0.1.0")
 
@@ -18,6 +18,8 @@ Base.metadata.create_all(bind=engine)
 origenes_permitidos = [
     "http://localhost:8081",
     "http://localhost:8082",
+    "http://localhost:8083",
+    "http://localhost:8084",
     "https://swimmerprofile.vercel.app",           
     "https://swimmobilensf.vercel.app",   # El enlace oficial para tus profesores
 ]
@@ -49,6 +51,7 @@ app.include_router(swimmer_self.router)
 app.include_router(reports.router)
 app.include_router(test_batteries.router)
 app.include_router(club_records.router)
+app.include_router(app_update_notes.router)
 
 @app.get("/")
 def root():

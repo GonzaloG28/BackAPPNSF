@@ -24,3 +24,9 @@ class TestBatteryResult(Base):
         "TestBatterySplit", back_populates="result",
         cascade="all, delete-orphan", order_by="TestBatterySplit.distance_mark",
     )
+    # Repeticiones numeradas (batteries con reps_count>1, ej. 10x100m) —
+    # cada una con su propio tiempo y, opcionalmente, sus propios parciales.
+    reps = relationship(
+        "TestBatteryRep", back_populates="result",
+        cascade="all, delete-orphan", order_by="TestBatteryRep.rep_number",
+    )

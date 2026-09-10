@@ -23,6 +23,10 @@ class GymRecord(Base):
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
     exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False)
     one_rm_kg = Column(Numeric(6, 2), nullable=False)
+    # Peso x reps que se usó para calcular el RM (fórmula de Brzycki) — null
+    # en registros anteriores a este campo, donde solo se guardó el RM.
+    weight_kg = Column(Numeric(6, 2), nullable=True)
+    reps = Column(Integer, nullable=True)
     recorded_at = Column(DateTime, server_default=func.now())
 
     swimmer = relationship("Swimmer")

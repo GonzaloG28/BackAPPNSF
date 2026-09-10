@@ -22,4 +22,6 @@ from app.models.day_note import DayNote
 from app.models.test_battery import TestBattery
 from app.models.test_battery_result import TestBatteryResult
 from app.models.test_battery_split import TestBatterySplit
+from app.models.test_battery_rep import TestBatteryRep, TestBatteryRepSplit
 from app.models.club_record import ClubRecord
+from app.models.app_update_note import AppUpdateNote

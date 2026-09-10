@@ -18,6 +18,9 @@ class TestBatteryCreate(BaseModel):
     result_type: TestResultType = TestResultType.TIME
     distance_m: Optional[int] = None
     allows_splits: bool = False
+    reps_count: Optional[int] = None
+    is_control: bool = False
+    event_type_id: Optional[int] = None
 
 
 class TestBatteryUpdate(BaseModel):
@@ -27,6 +30,23 @@ class TestBatteryUpdate(BaseModel):
     result_type: Optional[TestResultType] = None
     distance_m: Optional[int] = None
     allows_splits: Optional[bool] = None
+    reps_count: Optional[int] = None
+    is_control: Optional[bool] = None
+    event_type_id: Optional[int] = None
+
+
+class TestBatteryRepIn(BaseModel):
+    rep_number: int
+    time_seconds: float
+    notes: Optional[str] = None
+    splits: Optional[list[TestBatterySplitIn]] = None
+
+
+class RepsResultIn(BaseModel):
+    swimmer_id: int
+    recorded_date: date
+    reps: list[TestBatteryRepIn]
+    notes: Optional[str] = None
 
 
 class TestBatteryResultEntry(BaseModel):

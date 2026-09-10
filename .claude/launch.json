@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontSwimMobile",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd /d C:\\Dev\\frontSwimMobile && npx expo start --web --port 8081"],
+      "port": 8081
+    },
+    {
+      "name": "SwimmerMobile",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd /d C:\\Dev\\SwimmerMobile && npx expo start --web --port 8082"],
+      "port": 8082
+    }
+  ]
+}

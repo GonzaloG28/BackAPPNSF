@@ -82,9 +82,14 @@ class Swimmer(Base):
 
     photo_base64 = Column(Text, nullable=True)
 
-    hashed_password = Column(String(255), nullable=True) 
+    hashed_password = Column(String(255), nullable=True)
     must_change_password = Column(Boolean, nullable=False, default=True)
-    payment_active = Column(Boolean, nullable=False, default=False) 
+    payment_active = Column(Boolean, nullable=False, default=False)
+
+    # Usuario de pruebas ("fantasma") — queda fuera de los conteos de
+    # roster/plantel del entrenador (total, activos, por categoría, etc.)
+    # pero sigue existiendo con datos reales para QA de features nuevas.
+    exclude_from_roster = Column(Boolean, nullable=False, default=False)
 
 
     @property

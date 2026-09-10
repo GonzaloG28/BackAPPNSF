@@ -13,6 +13,7 @@ class User(Base):
     email = Column(String(150), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)  # 1 = activo, 0 = inactivo
+    is_admin = Column(Boolean, default=False, nullable=False)  # panel de administrador, separado del panel del profesor
 
     created_at = Column(DateTime, server_default=func.now())
 
